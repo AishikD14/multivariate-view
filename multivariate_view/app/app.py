@@ -1,10 +1,13 @@
 from pathlib import Path
 
+from matplotlib import pyplot as plt
 import numba
 import numpy as np
 
 import plotly.graph_objects as go
 
+from sklearn.cluster import KMeans
+from sklearn.manifold import TSNE
 from trame.app import get_server
 from trame.assets.remote import download_file_from_google_drive
 from trame.decorators import TrameApp, change, life_cycle
@@ -21,13 +24,19 @@ from .compute import (
 )
 from .io import load_dataset
 from .volume_view import VolumeView
+import time
+from scipy.spatial import cKDTree
+import warnings
 
+# Ignore warnings
+warnings.filterwarnings("ignore")
 
 # We will cache downloaded data examples in this directory.
 EXAMPLE_DATA_DIR = Path(__file__).parent.parent.parent / 'data'
 EXAMPLE_DATA_PATH = (
     EXAMPLE_DATA_DIR / 'CeCoFeGd_doi_10.1038_s43246-022-00259-x.h5'
 )
+EXAMPLE_SEGMENT_PATH = EXAMPLE_DATA_DIR / 'volume_labels.npy'
 EXAMPLE_GOOGLE_DRIVE_ID = '1nI_hzrqbGBypUU7jMbWnF7-PkqNMiwqB'
 EXAMPLE_DATA_REF = 'https://doi.org/10.1038/s43246-022-00259-x'
 
@@ -126,6 +135,8 @@ class App:
 
     def load_data(self, file_to_load):
         header, data = load_dataset(Path(file_to_load))
+        print(header)
+        print("Data shape on load ", data.shape)
 
         # Handle NaN if provided
         if self.nan_replacement is not None:
@@ -136,6 +147,7 @@ class App:
         # the first non-zero voxel is hit.
         # Our sample data has a *lot* of padding.
         data = _remove_padding_uniform(data)
+        print("Data shape after padding removal ", data.shape)
 
         if self.opacity_channel is not None:
             # Extract the opacity data
@@ -159,12 +171,135 @@ class App:
             np.prod(self.data_shape), self.num_channels
         )
 
+        print(f"Number of channels: {self.num_channels}")
+        print(f"Raw unpadded flattened data shape: {self.raw_unpadded_flattened_data.shape}")
+
         if self.normalize_channels:
             # Normalize each channel to be between 0 and 1
             for i in range(data.shape[-1]):
                 data[:, :, :, i] = _normalize_data(data[:, :, :, i])
         else:
             data = _normalize_data(data)
+
+        print("Data shape after normalization ", data.shape)
+
+        # ------------------------------------------------------------------------------------------------
+
+        print("---------------------------------------------------")
+
+        if not EXAMPLE_SEGMENT_PATH.exists():
+            # Generate supervoxels
+            segments, _ = self.generate_supervoxel(data)
+        else:
+            # Load the supervoxels
+            segments = np.load(EXAMPLE_SEGMENT_PATH)
+            print("Labels loaded.")
+            print("Number of superpixels:", len(np.unique(segments)))
+            print("Range of labels:", np.min(segments), np.max(segments))
+            print("Shape of labels:", segments.shape)
+
+        print("---------------------------------------------------")
+
+
+        unique_segments = np.unique(segments)  # Get unique segment IDs
+        segment_vectors = []
+
+        # Loop through each segment ID and compute mean feature vector
+        for segment_id in unique_segments:
+            mask = (segments == segment_id)  # Mask for current segment
+            mean_value = np.mean(data[mask], axis=0)
+            segment_vectors.append(mean_value)
+
+        # Convert the list of vectors to a NumPy array
+        segment_vectors = np.array(segment_vectors)
+
+        print("Segment vector shape ", segment_vectors.shape)
+
+        print("---------------------------------------------------")
+
+        # Perform t-SNE for dimensionality reduction
+        tsne = TSNE(n_components=2, random_state=42)
+        reduced_data = tsne.fit_transform(segment_vectors)
+
+        # Create dummy labels for visualization (use actual labels if available)
+        segment_labels = np.arange(len(reduced_data))
+
+        # Extract colors for each segment in the same order as `segment_ids`
+        # color_array = np.array([segmentColorDict[seg_id] for seg_id in segment_labels])
+
+        # Create a scatter plot of the t-SNE reduced data
+        plt.figure(figsize=(10, 8))
+
+        scatter = plt.scatter(reduced_data[:, 0], reduced_data[:, 1], c=segment_labels, cmap='viridis', alpha=0.7)
+        plt.colorbar(scatter)
+
+        plt.title('t-SNE Visualization of Segments')
+        plt.xlabel('t-SNE Component 1')
+        plt.ylabel('t-SNE Component 2')
+        plt.grid(True)
+        # plt.show()
+        # quit()
+
+        # Perform K-means clustering on the segment vectors to get an initial set of clusters
+
+        start_time = time.time()
+
+        # Number of clusters
+        num_clusters = 5
+
+        # Perform K-means clustering
+        kmeans = KMeans(n_clusters=num_clusters, random_state=42)
+        cluster_labels = kmeans.fit_predict(segment_vectors)
+
+        print(f"K-means clustering completed in {time.time() - start_time:.2f} seconds")
+
+        print("---------------------------------------------------")
+
+        cluster_color_dict = {}
+
+        colormap = plt.cm.get_cmap("tab10")
+
+        plt.figure(figsize=(10, 8))
+
+        for i in range(num_clusters):  # 5 clusters
+            cluster_color_dict[i] = colormap(i)
+            plt.scatter(reduced_data[cluster_labels == i, 0], reduced_data[cluster_labels == i, 1], label=f'Cluster {i+1}')
+
+        plt.legend()
+        plt.title('t-sne Visualization of Segments after K-means Clustering')
+        plt.xlabel('t-sne Component 1')
+        plt.ylabel('t-sne Component 2')
+        plt.grid(True)
+        # plt.show()
+        # quit()
+
+        for cluster_id in np.unique(cluster_labels):
+            cluster_color_dict[cluster_id] = list(map(lambda x: x, cluster_color_dict[cluster_id][:3]))
+
+        print("Cluster Color Dictionary for K-means clusters: ", cluster_color_dict)
+
+        print("---------------------------------------------------")
+
+        final_colored_volume = np.zeros(data.shape)
+
+        final_colored_volume = final_colored_volume[:, :, :, :3]
+
+        for i in range(data.shape[0]):
+            for j in range(data.shape[1]):
+                for k in range(data.shape[2]):
+                    segment_id = segments[i, j, k]
+                    cluster_id = cluster_labels[segment_id]
+                    final_colored_volume[i, j, k] = cluster_color_dict[cluster_id]
+
+        print("Final colored volume shape ", final_colored_volume.shape)
+
+        flattened_final_colored_volume = final_colored_volume.reshape(np.prod(self.data_shape), 3)
+
+        print("Flattened final colored volume shape ", flattened_final_colored_volume.shape)
+
+        print("---------------------------------------------------")
+
+        # ------------------------------------------------------------------------------------------------
 
         fields = None
         if self.enable_preprocessing:
@@ -195,10 +330,25 @@ class App:
         flattened_data = data.reshape(
             np.prod(self.data_shape), self.num_channels
         )
+        print("Flattened data shape ", flattened_data.shape)
         self.nonzero_indices = ~np.all(np.isclose(flattened_data, 0), axis=1)
 
         # Only store nonzero data. We will reconstruct the zeros later.
         self.nonzero_data = flattened_data[self.nonzero_indices]
+        print("Nonzero data shape ", self.nonzero_data.shape)
+
+        # ------------------------------------------------------------------------------------------------
+        
+        print("---------------------------------------------------")
+
+        nonzero_final_colored_volume = flattened_final_colored_volume[self.nonzero_indices]
+        print("Nonzero final colored volume shape ", nonzero_final_colored_volume.shape)
+
+        self.kmeans_rgb_data = nonzero_final_colored_volume
+
+        print("---------------------------------------------------")
+
+        # ------------------------------------------------------------------------------------------------
 
         # Trigger an update of the data
         self.update_gbc()
@@ -315,6 +465,8 @@ class App:
 
         self.gbc_data = gbc
         self.rgb_data = gbc_to_rgb(gbc)
+        print("RGB Data shape", self.rgb_data.shape)
+        print(self.rgb_data[:,0])
 
         self.update_volume_data()
 
@@ -330,7 +482,8 @@ class App:
 
         # Reconstruct full data with rgba values
         full_data = np.zeros((np.prod(self.data_shape), 4))
-        full_data[self.nonzero_indices, :3] = rgb.T
+        # full_data[self.nonzero_indices, :3] = rgb.T
+        full_data[self.nonzero_indices, :3] = self.kmeans_rgb_data
 
         if self.opacity_data is None:
             # Make nonzero voxels have an alpha of the mean of the channels.
@@ -961,6 +1114,29 @@ class App:
             # print(layout)
             return layout
 
+    # Function to generate supervoxels
+    def generate_supervoxel(self, data):
+        print("Starting SLIC segmentation...")
+
+        start_time = time.time()
+
+        # Call the custom SLIC function
+        num_supervoxels = 500
+        labels, cluster_centers = custom_slic(data, num_supervoxels)
+
+        print("SLIC segmentation complete.")
+        print("Supervoxel generation time:", time.time() - start_time)
+
+        print("Number of supervoxels:", len(cluster_centers))
+        print("Range of labels:", np.min(labels), np.max(labels))
+        print("Shape of labels:", labels.shape)
+
+        # Save the labels
+        np.save(EXAMPLE_SEGMENT_PATH, labels)
+
+        print("Labels saved.")
+
+        return labels, cluster_centers
 
 @numba.njit(cache=True, nogil=True)
 def _compute_alpha(center, radius, gbc_data):
@@ -1007,3 +1183,123 @@ def _bar_plot(key_values):
     return go.Figure(
         data=go.Bar(x=list(key_values.keys()), y=list(key_values.values()))
     ).update_layout(yaxis_title="%", margin=dict(l=10, r=10, t=25, b=10))
+
+# -------------------------------------------------------------------------------
+
+def initialize_cluster_centers(data, num_superpixels, grid_spacing):
+    """
+    Initialize cluster centers based on a uniform 3D grid, ignoring zero-value voxels.
+    """
+    depth, rows, cols, _ = data.shape
+    centers = []
+    for d in range(grid_spacing // 2, depth, grid_spacing):
+        for r in range(grid_spacing // 2, rows, grid_spacing):
+            for c in range(grid_spacing // 2, cols, grid_spacing):
+                if not np.all(data[d, r, c] == 0):  # Ignore zero-value voxels
+                    centers.append([d, r, c] + list(data[d, r, c]))
+    return np.array(centers, dtype=np.float32)
+
+@numba.njit
+def calculate_distance(voxel, center, spatial_weight, feature_weight):
+    """
+    Compute the combined distance between a voxel and a cluster center in 3D.
+    """
+    spatial_dist = np.sqrt((voxel[0] - center[0])**2 + (voxel[1] - center[1])**2 + (voxel[2] - center[2])**2)
+    feature_dist = np.sqrt(np.sum((voxel[3:] - center[3:])**2))
+    return np.sqrt((spatial_dist / spatial_weight)**2 + (feature_dist / feature_weight)**2)
+
+@numba.njit
+def assign_voxels_to_clusters(data, cluster_centers, labels, distances, spatial_weight, feature_weight, grid_spacing):
+    """
+    Assign each voxel to the nearest cluster center within its search window, ignoring zero-value voxels.
+    """
+    depth, rows, cols, _ = data.shape
+    for idx, center in enumerate(cluster_centers):
+        d, r, c = int(center[0]), int(center[1]), int(center[2])
+        
+        # Search window around the cluster center
+        d_min = max(d - grid_spacing, 0)
+        d_max = min(d + grid_spacing + 1, depth)
+        r_min = max(r - grid_spacing, 0)
+        r_max = min(r + grid_spacing + 1, rows)
+        c_min = max(c - grid_spacing, 0)
+        c_max = min(c + grid_spacing + 1, cols)
+
+        for dd in range(d_min, d_max):
+            for rr in range(r_min, r_max):
+                for cc in range(c_min, c_max):
+                    if np.all(data[dd, rr, cc] == 0):
+                        continue  # Ignore zero-value voxels
+                    
+                    voxel = np.array([dd, rr, cc] + list(data[dd, rr, cc]))
+                    distance = calculate_distance(voxel, center, spatial_weight, feature_weight)
+                    if distance < distances[dd, rr, cc]:
+                        distances[dd, rr, cc] = distance
+                        labels[dd, rr, cc] = idx
+
+@numba.njit
+def update_cluster_centers(data, labels, cluster_centers):
+    """
+    Compute new cluster centers based on the average of assigned voxels.
+    """
+    num_clusters = len(cluster_centers)
+    num_features = data.shape[3]
+    
+    new_centers = np.zeros_like(cluster_centers)
+    counts = np.zeros(num_clusters, dtype=np.int32)
+
+    depth, rows, cols = labels.shape
+    for d in range(depth):
+        for r in range(rows):
+            for c in range(cols):
+                label = labels[d, r, c]
+                if label == -1:
+                    continue  # Skip unassigned voxels
+                new_centers[label][:3] += np.array([d, r, c], dtype=np.float32)
+                new_centers[label][3:] += data[d, r, c]
+                counts[label] += 1
+
+    for i in range(num_clusters):
+        if counts[i] > 0:
+            new_centers[i] /= counts[i]
+
+    return new_centers
+
+def custom_slic(data, num_superpixels, spatial_weight=5, max_iter=20):
+    """
+    Perform optimized SLIC segmentation on 4D volumetric data,
+    ensuring zero-value voxels are ignored in segmentation and grouped into a single supervoxel at the end.
+    """
+    depth, rows, cols, num_features = data.shape
+    grid_spacing = int(np.cbrt((depth * rows * cols) / num_superpixels))
+    feature_weight = np.std(data.reshape(-1, num_features), axis=0).mean()
+
+    # Initialize cluster centers
+    cluster_centers = initialize_cluster_centers(data, num_superpixels, grid_spacing)
+    labels = -1 * np.ones((depth, rows, cols), dtype=np.int32)
+    distances = np.full((depth, rows, cols), np.inf, dtype=np.float32)
+
+    # Iterate until convergence
+    for _ in range(max_iter):
+        assign_voxels_to_clusters(data, cluster_centers, labels, distances, spatial_weight, feature_weight, grid_spacing)
+        cluster_centers = update_cluster_centers(data, labels, cluster_centers)
+    
+    # Assign all zero-value voxels to a single supervoxel label
+    zero_voxel_label = (np.max(labels) + 1)
+    for d in range(depth):
+        for r in range(rows):
+            for c in range(cols):
+                if np.all(np.abs(data[r, c]) < 1e-15):
+                    labels[d, r, c] = zero_voxel_label
+
+    # Ensure all voxels are assigned to a cluster
+    unassigned = np.where(labels == -1)
+    if unassigned[0].size > 0:
+        tree = cKDTree(cluster_centers[:, :3])
+        points = np.column_stack(unassigned)
+        _, nearest_labels = tree.query(points)
+        labels[unassigned] = nearest_labels
+
+    return labels, cluster_centers
+
+# -------------------------------------------------------------------------------
