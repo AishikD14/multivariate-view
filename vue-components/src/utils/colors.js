@@ -48,7 +48,15 @@ export function computeColorMapImage(size, brushMode) {
   for (let i = xyOffset; i < xyOffset + diameter; i++) {
     for (let j = xyOffset; j < xyOffset + diameter; j++) {
       if (brushMode == 1.0) {
-        ctx.fillStyle = "#C7D9E8";
+        let arr = colorConstrainInUnit(scaleGBC.invert(j), scaleGBC.invert(i));
+        let cx = arr[0];
+        let cy = arr[1];
+        if (cx * cx + cy * cy > 0.999999) {
+          ctx.fillStyle = "#00000000";
+        }
+        else{
+          ctx.fillStyle = "#C7D9E8";
+        }
       } else {
         ctx.fillStyle = coordToColor(
           scaleGBC.invert(j),

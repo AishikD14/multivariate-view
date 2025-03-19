@@ -36,10 +36,18 @@ EXAMPLE_DATA_DIR = Path(__file__).parent.parent.parent / 'data'
 EXAMPLE_DATA_PATH = (
     EXAMPLE_DATA_DIR / 'CeCoFeGd_doi_10.1038_s43246-022-00259-x.h5'
 )
-EXAMPLE_SEGMENT_PATH = EXAMPLE_DATA_DIR / 'volume_labels.npy'
 EXAMPLE_GOOGLE_DRIVE_ID = '1nI_hzrqbGBypUU7jMbWnF7-PkqNMiwqB'
 EXAMPLE_DATA_REF = 'https://doi.org/10.1038/s43246-022-00259-x'
 
+dataset = "default"
+dataset = 'thigh_sarcoma'
+
+use_supervoxels = True
+
+if dataset == "default":
+    EXAMPLE_SEGMENT_PATH = EXAMPLE_DATA_DIR / 'volume_labels.npy'
+elif dataset == "thigh_sarcoma":
+    EXAMPLE_SEGMENT_PATH = EXAMPLE_DATA_DIR / 'volume_labels_thigh_sarcoma.npy'
 
 @TrameApp()
 class App:
@@ -135,6 +143,11 @@ class App:
 
     def load_data(self, file_to_load):
         header, data = load_dataset(Path(file_to_load))
+
+        if dataset == "thigh_sarcoma":
+            header[0], header[1] = header[1], header[0]
+            data[:, :, :, [0, 1]] = data[:, :, :, [1, 0]]
+
         print(header)
         print("Data shape on load ", data.shape)
 
@@ -185,119 +198,121 @@ class App:
 
         # ------------------------------------------------------------------------------------------------
 
-        print("---------------------------------------------------")
+        if use_supervoxels:
 
-        if not EXAMPLE_SEGMENT_PATH.exists():
-            # Generate supervoxels
-            segments, _ = self.generate_supervoxel(data)
-        else:
-            # Load the supervoxels
-            segments = np.load(EXAMPLE_SEGMENT_PATH)
-            print("Labels loaded.")
-            print("Number of superpixels:", len(np.unique(segments)))
-            print("Range of labels:", np.min(segments), np.max(segments))
-            print("Shape of labels:", segments.shape)
+            print("---------------------------------------------------")
 
-        print("---------------------------------------------------")
+            if not EXAMPLE_SEGMENT_PATH.exists():
+                # Generate supervoxels
+                segments, _ = self.generate_supervoxel(data, True)
+            else:
+                # Load the supervoxels
+                segments = np.load(EXAMPLE_SEGMENT_PATH)
+                print("Labels loaded.")
+                print("Number of supervoxels:", len(np.unique(segments)))
+                print("Range of labels:", np.min(segments), np.max(segments))
+                print("Shape of labels:", segments.shape)
+
+            print("---------------------------------------------------")
 
 
-        unique_segments = np.unique(segments)  # Get unique segment IDs
-        segment_vectors = []
+            unique_segments = np.unique(segments)  # Get unique segment IDs
+            segment_vectors = []
 
-        # Loop through each segment ID and compute mean feature vector
-        for segment_id in unique_segments:
-            mask = (segments == segment_id)  # Mask for current segment
-            mean_value = np.mean(data[mask], axis=0)
-            segment_vectors.append(mean_value)
+            # Loop through each segment ID and compute mean feature vector
+            for segment_id in unique_segments:
+                mask = (segments == segment_id)  # Mask for current segment
+                mean_value = np.mean(data[mask], axis=0)
+                segment_vectors.append(mean_value)
 
-        # Convert the list of vectors to a NumPy array
-        segment_vectors = np.array(segment_vectors)
+            # Convert the list of vectors to a NumPy array
+            segment_vectors = np.array(segment_vectors)
 
-        print("Segment vector shape ", segment_vectors.shape)
+            print("Segment vector shape ", segment_vectors.shape)
 
-        print("---------------------------------------------------")
+            print("---------------------------------------------------")
 
-        # Perform t-SNE for dimensionality reduction
-        tsne = TSNE(n_components=2, random_state=42)
-        reduced_data = tsne.fit_transform(segment_vectors)
+            # Perform t-SNE for dimensionality reduction
+            tsne = TSNE(n_components=2, random_state=42)
+            reduced_data = tsne.fit_transform(segment_vectors)
 
-        # Create dummy labels for visualization (use actual labels if available)
-        segment_labels = np.arange(len(reduced_data))
+            # Create dummy labels for visualization (use actual labels if available)
+            segment_labels = np.arange(len(reduced_data))
 
-        # Extract colors for each segment in the same order as `segment_ids`
-        # color_array = np.array([segmentColorDict[seg_id] for seg_id in segment_labels])
+            # Extract colors for each segment in the same order as `segment_ids`
+            # color_array = np.array([segmentColorDict[seg_id] for seg_id in segment_labels])
 
-        # Create a scatter plot of the t-SNE reduced data
-        plt.figure(figsize=(10, 8))
+            # Create a scatter plot of the t-SNE reduced data
+            plt.figure(figsize=(10, 8))
 
-        scatter = plt.scatter(reduced_data[:, 0], reduced_data[:, 1], c=segment_labels, cmap='viridis', alpha=0.7)
-        plt.colorbar(scatter)
+            scatter = plt.scatter(reduced_data[:, 0], reduced_data[:, 1], c=segment_labels, cmap='viridis', alpha=0.7)
+            plt.colorbar(scatter)
 
-        plt.title('t-SNE Visualization of Segments')
-        plt.xlabel('t-SNE Component 1')
-        plt.ylabel('t-SNE Component 2')
-        plt.grid(True)
-        # plt.show()
-        # quit()
+            plt.title('t-SNE Visualization of Segments')
+            plt.xlabel('t-SNE Component 1')
+            plt.ylabel('t-SNE Component 2')
+            plt.grid(True)
+            # plt.show()
+            # quit()
 
-        # Perform K-means clustering on the segment vectors to get an initial set of clusters
+            # Perform K-means clustering on the segment vectors to get an initial set of clusters
 
-        start_time = time.time()
+            start_time = time.time()
 
-        # Number of clusters
-        num_clusters = 5
+            # Number of clusters
+            num_clusters = 5
 
-        # Perform K-means clustering
-        kmeans = KMeans(n_clusters=num_clusters, random_state=42)
-        cluster_labels = kmeans.fit_predict(segment_vectors)
+            # Perform K-means clustering
+            kmeans = KMeans(n_clusters=num_clusters, random_state=42)
+            cluster_labels = kmeans.fit_predict(segment_vectors)
 
-        print(f"K-means clustering completed in {time.time() - start_time:.2f} seconds")
+            print(f"K-means clustering completed in {time.time() - start_time:.2f} seconds")
 
-        print("---------------------------------------------------")
+            print("---------------------------------------------------")
 
-        cluster_color_dict = {}
+            cluster_color_dict = {}
 
-        colormap = plt.cm.get_cmap("tab10")
+            colormap = plt.cm.get_cmap("tab10")
 
-        plt.figure(figsize=(10, 8))
+            plt.figure(figsize=(10, 8))
 
-        for i in range(num_clusters):  # 5 clusters
-            cluster_color_dict[i] = colormap(i)
-            plt.scatter(reduced_data[cluster_labels == i, 0], reduced_data[cluster_labels == i, 1], label=f'Cluster {i+1}')
+            for i in range(num_clusters):  # 5 clusters
+                cluster_color_dict[i] = colormap(i)
+                plt.scatter(reduced_data[cluster_labels == i, 0], reduced_data[cluster_labels == i, 1], label=f'Cluster {i+1}')
 
-        plt.legend()
-        plt.title('t-sne Visualization of Segments after K-means Clustering')
-        plt.xlabel('t-sne Component 1')
-        plt.ylabel('t-sne Component 2')
-        plt.grid(True)
-        # plt.show()
-        # quit()
+            plt.legend()
+            plt.title('t-sne Visualization of Segments after K-means Clustering')
+            plt.xlabel('t-sne Component 1')
+            plt.ylabel('t-sne Component 2')
+            plt.grid(True)
+            # plt.show()
+            # quit()
 
-        for cluster_id in np.unique(cluster_labels):
-            cluster_color_dict[cluster_id] = list(map(lambda x: x, cluster_color_dict[cluster_id][:3]))
+            for cluster_id in np.unique(cluster_labels):
+                cluster_color_dict[cluster_id] = list(map(lambda x: x, cluster_color_dict[cluster_id][:3]))
 
-        print("Cluster Color Dictionary for K-means clusters: ", cluster_color_dict)
+            print("Cluster Color Dictionary for K-means clusters: ", cluster_color_dict)
 
-        print("---------------------------------------------------")
+            print("---------------------------------------------------")
 
-        final_colored_volume = np.zeros(data.shape)
+            final_colored_volume = np.zeros(data.shape)
 
-        final_colored_volume = final_colored_volume[:, :, :, :3]
+            final_colored_volume = final_colored_volume[:, :, :, :3]
 
-        for i in range(data.shape[0]):
-            for j in range(data.shape[1]):
-                for k in range(data.shape[2]):
-                    segment_id = segments[i, j, k]
-                    cluster_id = cluster_labels[segment_id]
-                    final_colored_volume[i, j, k] = cluster_color_dict[cluster_id]
+            for i in range(data.shape[0]):
+                for j in range(data.shape[1]):
+                    for k in range(data.shape[2]):
+                        segment_id = segments[i, j, k]
+                        cluster_id = cluster_labels[segment_id]
+                        final_colored_volume[i, j, k] = cluster_color_dict[cluster_id]
 
-        print("Final colored volume shape ", final_colored_volume.shape)
+            print("Final colored volume shape ", final_colored_volume.shape)
 
-        flattened_final_colored_volume = final_colored_volume.reshape(np.prod(self.data_shape), 3)
+            flattened_final_colored_volume = final_colored_volume.reshape(np.prod(self.data_shape), 3)
 
-        print("Flattened final colored volume shape ", flattened_final_colored_volume.shape)
+            print("Flattened final colored volume shape ", flattened_final_colored_volume.shape)
 
-        print("---------------------------------------------------")
+            print("---------------------------------------------------")
 
         # ------------------------------------------------------------------------------------------------
 
@@ -338,15 +353,17 @@ class App:
         print("Nonzero data shape ", self.nonzero_data.shape)
 
         # ------------------------------------------------------------------------------------------------
+
+        if use_supervoxels:
         
-        print("---------------------------------------------------")
+            print("---------------------------------------------------")
 
-        nonzero_final_colored_volume = flattened_final_colored_volume[self.nonzero_indices]
-        print("Nonzero final colored volume shape ", nonzero_final_colored_volume.shape)
+            nonzero_final_colored_volume = flattened_final_colored_volume[self.nonzero_indices]
+            print("Nonzero final colored volume shape ", nonzero_final_colored_volume.shape)
 
-        self.kmeans_rgb_data = nonzero_final_colored_volume
+            self.kmeans_rgb_data = nonzero_final_colored_volume
 
-        print("---------------------------------------------------")
+            print("---------------------------------------------------")
 
         # ------------------------------------------------------------------------------------------------
 
@@ -482,8 +499,10 @@ class App:
 
         # Reconstruct full data with rgba values
         full_data = np.zeros((np.prod(self.data_shape), 4))
-        # full_data[self.nonzero_indices, :3] = rgb.T
-        full_data[self.nonzero_indices, :3] = self.kmeans_rgb_data
+        if use_supervoxels:
+            full_data[self.nonzero_indices, :3] = self.kmeans_rgb_data
+        else:
+            full_data[self.nonzero_indices, :3] = rgb.T
 
         if self.opacity_data is None:
             # Make nonzero voxels have an alpha of the mean of the channels.
@@ -819,7 +838,7 @@ class App:
                             'unrotated_component_coords',
                             [],
                         ),
-                        size=600,
+                        size=400,
                         rotation=('w_rotation', 0),
                         sample_size=('w_sample_size', 1100),
                         number_of_bins=('w_bins', 6),
@@ -1115,7 +1134,7 @@ class App:
             return layout
 
     # Function to generate supervoxels
-    def generate_supervoxel(self, data):
+    def generate_supervoxel(self, data, save_data=False):
         print("Starting SLIC segmentation...")
 
         start_time = time.time()
@@ -1132,9 +1151,10 @@ class App:
         print("Shape of labels:", labels.shape)
 
         # Save the labels
-        np.save(EXAMPLE_SEGMENT_PATH, labels)
+        if save_data:
+            np.save(EXAMPLE_SEGMENT_PATH, labels)
 
-        print("Labels saved.")
+            print("Labels saved.")
 
         return labels, cluster_centers
 
@@ -1289,7 +1309,7 @@ def custom_slic(data, num_superpixels, spatial_weight=5, max_iter=20):
     for d in range(depth):
         for r in range(rows):
             for c in range(cols):
-                if np.all(np.abs(data[r, c]) < 1e-15):
+                if np.all(np.abs(data[d, r, c]) < 1e-15):
                     labels[d, r, c] = zero_voxel_label
 
     # Ensure all voxels are assigned to a cluster
