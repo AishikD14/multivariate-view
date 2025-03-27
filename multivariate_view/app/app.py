@@ -39,14 +39,20 @@ EXAMPLE_DATA_PATH = (
 EXAMPLE_GOOGLE_DRIVE_ID = '1nI_hzrqbGBypUU7jMbWnF7-PkqNMiwqB'
 EXAMPLE_DATA_REF = 'https://doi.org/10.1038/s43246-022-00259-x'
 
-dataset = "default"
+# dataset = "default"
 dataset = 'thigh_sarcoma'
 
 use_supervoxels = True
 
 if dataset == "default":
+    EXAMPLE_DATA_PATH = (
+        EXAMPLE_DATA_DIR / 'CeCoFeGd_doi_10.1038_s43246-022-00259-x.h5'
+    )
     EXAMPLE_SEGMENT_PATH = EXAMPLE_DATA_DIR / 'volume_labels.npy'
 elif dataset == "thigh_sarcoma":
+    EXAMPLE_DATA_PATH = (
+        EXAMPLE_DATA_DIR / 'thigh_sarcoma.h5'
+    )
     EXAMPLE_SEGMENT_PATH = EXAMPLE_DATA_DIR / 'volume_labels_thigh_sarcoma.npy'
 
 @TrameApp()
@@ -260,10 +266,17 @@ class App:
             start_time = time.time()
 
             # Number of clusters
-            num_clusters = 5
+            self.num_clusters = 5
+
+            clusterArray = {}
+
+            for i in range(self.num_clusters):
+                clusterArray[i] = False
+
+            self.state.cluster_array = clusterArray
 
             # Perform K-means clustering
-            kmeans = KMeans(n_clusters=num_clusters, random_state=42)
+            kmeans = KMeans(n_clusters=self.num_clusters, random_state=42)
             cluster_labels = kmeans.fit_predict(segment_vectors)
 
             print(f"K-means clustering completed in {time.time() - start_time:.2f} seconds")
@@ -276,7 +289,7 @@ class App:
 
             plt.figure(figsize=(10, 8))
 
-            for i in range(num_clusters):  # 5 clusters
+            for i in range(self.num_clusters):  # 5 clusters
                 cluster_color_dict[i] = colormap(i)
                 plt.scatter(reduced_data[cluster_labels == i, 0], reduced_data[cluster_labels == i, 1], label=f'Cluster {i+1}')
 
@@ -296,17 +309,22 @@ class App:
             print("---------------------------------------------------")
 
             final_colored_volume = np.zeros(data.shape)
+            self.final_cluster_labels = np.zeros(data.shape)
 
             final_colored_volume = final_colored_volume[:, :, :, :3]
+            self.final_cluster_labels = self.final_cluster_labels[:, :, :, 0]
 
             for i in range(data.shape[0]):
                 for j in range(data.shape[1]):
                     for k in range(data.shape[2]):
                         segment_id = segments[i, j, k]
                         cluster_id = cluster_labels[segment_id]
+                        self.final_cluster_labels[i, j, k] = cluster_id
                         final_colored_volume[i, j, k] = cluster_color_dict[cluster_id]
 
             print("Final colored volume shape ", final_colored_volume.shape)
+
+            print("Final cluster labels shape ", self.final_cluster_labels.shape)
 
             flattened_final_colored_volume = final_colored_volume.reshape(np.prod(self.data_shape), 3)
 
@@ -340,6 +358,7 @@ class App:
 
         # Provide control on data arrays
         self.state.data_channels = fields
+        print("Data channels ", fields)
 
         # Store the data in a flattened form. It is easier to work with.
         flattened_data = data.reshape(
@@ -450,6 +469,11 @@ class App:
     def update_gbc(self):
         gbc, components = compute_gbc(self.nonzero_data)
 
+        print("Nonzero data shape ", self.nonzero_data.shape)
+        print("GBC shape ", gbc.shape)
+        print("Components shape ", components.shape)
+        print("-----------------------------------------------------------------")
+
         self.unrotated_gbc = gbc
         self.state.unrotated_component_coords = components.tolist()
 
@@ -467,6 +491,9 @@ class App:
         num_samples = self.state.w_sample_size
         num_bins = self.state.w_bins
 
+        print("Number of samples ", num_samples)
+        print("Number of bins ", num_bins)
+
         # Perform random sampling
         sample_idx = np.random.choice(
             len(self.unrotated_gbc), size=num_samples
@@ -475,6 +502,10 @@ class App:
         unrotated_bin_data = data_topology_reduction(data, num_bins)
         self.state.unrotated_bin_data = unrotated_bin_data.tolist()
 
+        print("Data shape before sampling", self.unrotated_gbc.shape)
+        print("Data shape after sampling", unrotated_bin_data.shape)
+        print("-------------------------------------------------------------")
+
     @change('w_rotation')
     def update_voxel_colors(self, **kwargs):
         angle = np.radians(self.state.w_rotation)
@@ -482,8 +513,6 @@ class App:
 
         self.gbc_data = gbc
         self.rgb_data = gbc_to_rgb(gbc)
-        print("RGB Data shape", self.rgb_data.shape)
-        print(self.rgb_data[:,0])
 
         self.update_volume_data()
 
@@ -497,10 +526,23 @@ class App:
 
         rgb = self.rgb_data
 
+        print("RGB Data shape", self.rgb_data.T.shape)
+        print("Original Kmeans RGB Data shape", self.kmeans_rgb_data.shape)
+        if use_supervoxels:
+            if self.rgb_data.T.shape != self.kmeans_rgb_data.shape:
+                print("Kmeans RGB Data shape", self.filtered_kmeans_rgb_data.shape)
+            else:
+                print("Kmeans RGB Data shape", self.kmeans_rgb_data.shape)
+
+        print("-------------------------------------------------------------")
+
         # Reconstruct full data with rgba values
         full_data = np.zeros((np.prod(self.data_shape), 4))
         if use_supervoxels:
-            full_data[self.nonzero_indices, :3] = self.kmeans_rgb_data
+            if self.rgb_data.T.shape != self.kmeans_rgb_data.shape:
+                full_data[self.nonzero_indices, :3] = self.filtered_kmeans_rgb_data
+            else:
+                full_data[self.nonzero_indices, :3] = self.kmeans_rgb_data
         else:
             full_data[self.nonzero_indices, :3] = rgb.T
 
@@ -534,6 +576,7 @@ class App:
         'w_clip_x',
         'w_clip_y',
         'w_clip_z',
+        'cluster_array'
     )
     def update_mask_data(self, **kwargs):
         if any(x is None for x in (self.rgb_data, self.gbc_data)):
@@ -592,7 +635,7 @@ class App:
         if not self.state.array_modified:
             # No updates were actually made. Just return
             return
-
+        
         print("data_channels - changed")
         self.state.component_labels = [
             item.get("label")
@@ -640,6 +683,8 @@ class App:
 
         # Only store nonzero data. We will reconstruct the zeros later.
         self.nonzero_data = flattened_data[self.nonzero_indices]
+
+        self.filtered_kmeans_rgb_data = self.kmeans_rgb_data[self.nonzero_indices]
 
         # Trigger an update of the data
         self.update_gbc()
@@ -706,6 +751,25 @@ class App:
             slices.append(np.s_[min_idx:max_idx])
 
         clip_mask[slices[0], slices[1], slices[2]] = True
+
+        # ------------------------------------------------------------------------------------------------
+
+        # Filter out only selected clusters
+        cluster_array = self.state.cluster_array
+
+        selected_clusters = [i for i, v in cluster_array.items() if v]
+        if len(selected_clusters) > 0:
+            print("Selected clusters ", selected_clusters)
+
+            # Loop through the selected clusters and Filter out only the selected clusters from the data and set the rest to zero
+            for i in range(clip_mask.shape[0]):
+                for j in range(clip_mask.shape[1]):
+                    for k in range(clip_mask.shape[2]):
+                        cluster_id = int(self.final_cluster_labels[i, j, k])
+                        if str(cluster_id) not in selected_clusters:
+                            clip_mask[i, j, k] = 0
+
+        # ------------------------------------------------------------------------------------------------
 
         # Reshape into the flat form and remove any zero index data
         clip_flattened = clip_mask.reshape(np.prod(self.data_shape))
@@ -784,33 +848,16 @@ class App:
                             divided=True,
                             classes="mr-4",
                         ):
-                            v.VBtn(
-                                icon="mdi-database",
-                                value="tune-data",
-                                v_if="data_channels && Object.keys(data_channels).length",
-                            )
+                            v.VBtn(icon="mdi-database", value="tune-data", v_if="data_channels && Object.keys(data_channels).length")
                             v.VBtn(icon="mdi-magnify", value="lens")
                             v.VBtn(icon="mdi-palette", value="color")
-                            v.VBtn(
-                                icon="mdi-eye-settings-outline",
-                                value="rendering",
-                            )
-                            v.VBtn(
-                                icon="mdi-chart-histogram", value="sampling"
-                            )
+                            v.VBtn(icon="mdi-eye-settings-outline",value="rendering")
+                            v.VBtn(icon="mdi-chart-histogram", value="sampling")
                             v.VBtn(icon="mdi-crop", value="clip")
-                            v.VBtn(
-                                icon="mdi-sigma",
-                                value="voxel-means",
-                            )
-                            v.VBtn(
-                                icon="mdi-align-vertical-bottom",
-                                value="voxel-means-plot",
-                            )
-                            v.VBtn(
-                                icon="mdi-table",
-                                value="table",
-                            )
+                            v.VBtn(icon="mdi-sigma", value="voxel-means")
+                            v.VBtn(icon="mdi-align-vertical-bottom", value="voxel-means-plot")
+                            v.VBtn(icon="mdi-table", value="table")
+                            v.VBtn(icon="mdi-scatter-plot", value="filter-cluster")
 
                         v.VSpacer()
 
@@ -831,6 +878,7 @@ class App:
 
                     # Main widget
                     radvolviz.NdColorMap(
+                        brush_mode=1 if use_supervoxels else 0,
                         v_show="show_control_panel",
                         component_labels=('component_labels', []),
                         unrotated_bin_data=('unrotated_bin_data', []),
@@ -1128,6 +1176,31 @@ class App:
                                 show_select=True,
                                 v_model=("table_selection", []),
                                 hide_default_footer=True,
+                            )
+
+                    # Filter clusters
+                    with v.VCard(
+                        flat=True,
+                        v_show="show_control_panel && show_groups.includes('filter-cluster')",
+                        classes="py-1",
+                    ):
+                        v.VLabel("Choose the Clusters to visualize", classes="text-body-2 ml-1")
+                        v.VDivider(classes="mr-n4")
+                        
+                        with v.VRow(
+                            v_for=("data, name in cluster_array"),
+                            key="name",
+                            classes="mx-0 my-1",
+                        ):
+                            v.VSwitch(
+                                v_model=("cluster_array[name]", False),
+                                label=("`Cluster ${name}`", None),
+                                density="compact",
+                                hide_details=True,
+                                inset=True,
+                                color="green",
+                                classes="ml-2",
+                                update_modelValue="cluster_array[name] = $event; array_modified=name; flushState('cluster_array')"
                             )
 
             # print(layout)
