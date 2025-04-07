@@ -42,8 +42,6 @@ EXAMPLE_DATA_REF = 'https://doi.org/10.1038/s43246-022-00259-x'
 # dataset = "default"
 dataset = 'thigh_sarcoma'
 
-use_supervoxels = True
-
 if dataset == "default":
     EXAMPLE_DATA_PATH = (
         EXAMPLE_DATA_DIR / 'CeCoFeGd_doi_10.1038_s43246-022-00259-x.h5'
@@ -90,6 +88,13 @@ class App:
             help="Set a path to a label map file",
             default=None,
         )
+        self.server.cli.add_argument(
+            "--use-supervoxel",
+            help="Use supervoxel segmentation",
+            dest="use_supervoxel",
+            action="store_true",
+            default=False,
+        )
 
         args, _ = self.server.cli.parse_known_args()
         self.enable_preprocessing = args.preprocess
@@ -98,6 +103,7 @@ class App:
         self.opacity_channel = args.opacity_channel
         self.label_map_file = args.label_map
         self.label_map = None
+        self.use_supervoxels = args.use_supervoxel
 
         if self.label_map_file is not None:
             # Load the label map
@@ -204,7 +210,7 @@ class App:
 
         # ------------------------------------------------------------------------------------------------
 
-        if use_supervoxels:
+        if self.use_supervoxels:
 
             print("---------------------------------------------------")
 
@@ -268,12 +274,12 @@ class App:
             # Number of clusters
             self.num_clusters = 5
 
-            clusterArray = {}
+            self.clusterArray = {}
 
             for i in range(self.num_clusters):
-                clusterArray[i] = False
+                self.clusterArray[i] = False
 
-            self.state.cluster_array = clusterArray
+            self.state.cluster_array = self.clusterArray
 
             # Perform K-means clustering
             kmeans = KMeans(n_clusters=self.num_clusters, random_state=42)
@@ -373,7 +379,7 @@ class App:
 
         # ------------------------------------------------------------------------------------------------
 
-        if use_supervoxels:
+        if self.use_supervoxels:
         
             print("---------------------------------------------------")
 
@@ -527,8 +533,8 @@ class App:
         rgb = self.rgb_data
 
         print("RGB Data shape", self.rgb_data.T.shape)
-        print("Original Kmeans RGB Data shape", self.kmeans_rgb_data.shape)
-        if use_supervoxels:
+        if self.use_supervoxels:
+            print("Original Kmeans RGB Data shape", self.kmeans_rgb_data.shape)
             if self.rgb_data.T.shape != self.kmeans_rgb_data.shape:
                 print("Kmeans RGB Data shape", self.filtered_kmeans_rgb_data.shape)
             else:
@@ -538,7 +544,7 @@ class App:
 
         # Reconstruct full data with rgba values
         full_data = np.zeros((np.prod(self.data_shape), 4))
-        if use_supervoxels:
+        if self.use_supervoxels:
             if self.rgb_data.T.shape != self.kmeans_rgb_data.shape:
                 full_data[self.nonzero_indices, :3] = self.filtered_kmeans_rgb_data
             else:
@@ -581,8 +587,15 @@ class App:
     def update_mask_data(self, **kwargs):
         if any(x is None for x in (self.rgb_data, self.gbc_data)):
             return
+        
+        # Get value of cluster_array from arguments
+        new_cluster_array = kwargs.get('cluster_array', None)
+        clusterChanged = False
+        if new_cluster_array is not None and (self.clusterArray != new_cluster_array):
+            clusterChanged = True
+            self.clusterArray = new_cluster_array
 
-        alpha = self.compute_alpha()
+        alpha = self.compute_alpha(clusterChanged)
         mask_ref = self.volume_view.mask_reference
         mask_ref[self.nonzero_indices] = alpha
         self.volume_view.mask_data.Modified()
@@ -684,7 +697,8 @@ class App:
         # Only store nonzero data. We will reconstruct the zeros later.
         self.nonzero_data = flattened_data[self.nonzero_indices]
 
-        self.filtered_kmeans_rgb_data = self.kmeans_rgb_data[self.nonzero_indices]
+        if self.use_supervoxels:
+            self.filtered_kmeans_rgb_data = self.kmeans_rgb_data[self.nonzero_indices]
 
         # Trigger an update of the data
         self.update_gbc()
@@ -737,7 +751,7 @@ class App:
             self.state.w_clip_z,
         ]
 
-    def compute_alpha(self):
+    def compute_alpha(self, clusterChanged):
         gbc_data = self.gbc_data
         if gbc_data is None:
             # Can't do anything
@@ -754,20 +768,29 @@ class App:
 
         # ------------------------------------------------------------------------------------------------
 
-        # Filter out only selected clusters
-        cluster_array = self.state.cluster_array
+        if self.use_supervoxels:
+            self.indexArray = None
+            if not clusterChanged and self.indexArray is not None:
+                # If the cluster array is not changed, we can use the indexArray to find indexes we have to set as 0 in clip_mask
+                clip_mask[self.indexArray] = 0
+            else:
+                # Filter out only selected clusters
+                cluster_array = self.state.cluster_array
 
-        selected_clusters = [i for i, v in cluster_array.items() if v]
-        if len(selected_clusters) > 0:
-            print("Selected clusters ", selected_clusters)
+                selected_clusters = [i for i, v in cluster_array.items() if v]
+                if len(selected_clusters) > 0:
+                    print("Selected clusters ", selected_clusters)
 
-            # Loop through the selected clusters and Filter out only the selected clusters from the data and set the rest to zero
-            for i in range(clip_mask.shape[0]):
-                for j in range(clip_mask.shape[1]):
-                    for k in range(clip_mask.shape[2]):
-                        cluster_id = int(self.final_cluster_labels[i, j, k])
-                        if str(cluster_id) not in selected_clusters:
-                            clip_mask[i, j, k] = 0
+                    self.indexArray = np.zeros(self.data_shape, dtype=bool)
+
+                    # Loop through the selected clusters and Filter out only the selected clusters from the data and set the rest to zero
+                    for i in range(clip_mask.shape[0]):
+                        for j in range(clip_mask.shape[1]):
+                            for k in range(clip_mask.shape[2]):
+                                cluster_id = int(self.final_cluster_labels[i, j, k])
+                                if str(cluster_id) not in selected_clusters:
+                                    clip_mask[i, j, k] = 0
+                                    self.indexArray[i, j, k] = True
 
         # ------------------------------------------------------------------------------------------------
 
@@ -878,7 +901,7 @@ class App:
 
                     # Main widget
                     radvolviz.NdColorMap(
-                        brush_mode=1 if use_supervoxels else 0,
+                        brush_mode=1 if self.use_supervoxels else 0,
                         v_show="show_control_panel",
                         component_labels=('component_labels', []),
                         unrotated_bin_data=('unrotated_bin_data', []),
