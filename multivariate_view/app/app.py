@@ -716,6 +716,17 @@ class App:
             self.volume_view.renderer.SetBackground(0, 0, 0)
         self.ctrl.view_update()
 
+    @change("slice_axis")
+    def update_max_slice_index(self, slice_axis, **kwargs):
+        if slice_axis == "x":
+            self.state.max_slice_index = self.data_shape[0] - 1
+        elif slice_axis == "y":
+            self.state.max_slice_index = self.data_shape[1] - 1
+        else:
+            self.state.max_slice_index = self.data_shape[2] - 1
+
+        self.state.slice_index = 0  # reset index on axis change if needed
+
     @property
     def state(self):
         return self.server.state
@@ -881,6 +892,7 @@ class App:
                             v.VBtn(icon="mdi-align-vertical-bottom", value="voxel-means-plot")
                             v.VBtn(icon="mdi-table", value="table")
                             v.VBtn(icon="mdi-scatter-plot", value="filter-cluster")
+                            v.VBtn(icon="mdi-video-2d", value="visualize-slice")
 
                         v.VSpacer()
 
@@ -1226,6 +1238,58 @@ class App:
                                 update_modelValue="cluster_array[name] = $event; array_modified=name; flushState('cluster_array')"
                             )
 
+                    # Visualize slice
+                    with v.VCard(
+                        flat=True,
+                        v_show="show_control_panel && show_groups.includes('visualize-slice')",
+                        classes="py-1",
+                    ):
+                        v.VLabel("Visualize a slice", classes="text-body-2 ml-1")
+                        v.VDivider(classes="mr-n4")
+
+                        # Axis selection (x, y, z)
+                        with v.VRow(classes="mx-0 my-1"):
+                            with v.VRadioGroup(
+                                v_model=("slice_axis", "x"),  # default value
+                                row=True,
+                                classes="ml-2",
+                            ):
+                                v.VRadio(label="X", value="x")
+                                v.VRadio(label="Y", value="y")
+                                v.VRadio(label="Z", value="z")
+
+                        v.VDivider(classes="mr-n4")
+
+                        with v.VRow(classes="mx-0 my-1", align="center"):
+                            # Current slice label
+                            v.VLabel("Slice Index:", classes="mr-2")
+                            v.VLabel("{{ slice_index }}", classes="font-weight-bold")
+
+                        v.VSlider(
+                            v_model=("slice_index", 0),
+                            min=("min_slice_index", 0),
+                            max=("max_slice_index", 100),  # Dynamically updated based on axis
+                            step=1,
+                            hide_details=True,
+                            class_="mx-2",
+                        )
+
+                        # Min and Max labels
+                        with v.VRow(classes="mx-2", justify="space-between", style="margin-top: 10px;"):
+                            v.VLabel("Min: {{ min_slice_index }}")
+                            v.VLabel("Max: {{ max_slice_index }}")
+                        
+                        with v.VRow(classes="mx-0 my-1", align="center", style="margin-top: 10px;"):
+                            # External site button
+                            v.VBtn(
+                                "Visualize in 2D",
+                                color="primary",
+                                class_="mx-2 mt-2",
+                                style="margin-top: 20px !important; margin-left: 30% !important;",
+                                click="window.open(`http://127.0.0.1:8050?axis=${slice_axis}&index=${slice_index}`, '_blank')",
+                                # click="window.open(`https://google.com?axis=${slice_axis}&index=${slice_index}`, '_blank')",
+                            )
+                
             # print(layout)
             return layout
 
