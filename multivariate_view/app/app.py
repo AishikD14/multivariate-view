@@ -39,8 +39,8 @@ EXAMPLE_DATA_PATH = (
 EXAMPLE_GOOGLE_DRIVE_ID = '1nI_hzrqbGBypUU7jMbWnF7-PkqNMiwqB'
 EXAMPLE_DATA_REF = 'https://doi.org/10.1038/s43246-022-00259-x'
 
-# dataset = "default"
-dataset = 'thigh_sarcoma'
+dataset = "default"
+# dataset = 'thigh_sarcoma'
 
 if dataset == "default":
     EXAMPLE_DATA_PATH = (
@@ -136,6 +136,8 @@ class App:
                 )
 
             file_to_load = EXAMPLE_DATA_PATH
+
+        self.state.data_path = str(file_to_load)
 
         self.volume_view = VolumeView()
 
@@ -747,15 +749,15 @@ class App:
             fractional_slice_index = slice_index / self.state.max_slice_index
 
             if self.state.slice_axis == "x":
-                self.state.w_clip_x = [fractional_slice_index, fractional_slice_index + 0.02]
+                self.state.w_clip_x = [fractional_slice_index, fractional_slice_index + 0.01]
                 self.state.w_clip_y = [0, 1]
                 self.state.w_clip_z = [0, 1]
             elif self.state.slice_axis == "y":
-                self.state.w_clip_y = [fractional_slice_index, fractional_slice_index + 0.02]
+                self.state.w_clip_y = [fractional_slice_index, fractional_slice_index + 0.01]
                 self.state.w_clip_x = [0, 1]
                 self.state.w_clip_z = [0, 1]
             else:
-                self.state.w_clip_z = [fractional_slice_index, fractional_slice_index + 0.02]
+                self.state.w_clip_z = [fractional_slice_index, fractional_slice_index + 0.01]
                 self.state.w_clip_x = [0, 1]
                 self.state.w_clip_y = [0, 1]
 
@@ -1335,8 +1337,8 @@ class App:
                                 color="primary",
                                 class_="mx-2 mt-2",
                                 style="margin-top: 20px !important; margin-left: 30% !important;",
-                                click="window.open(`http://127.0.0.1:8050?axis=${slice_axis}&index=${slice_index}`, '_blank')",
-                                # click="window.open(`https://google.com?axis=${slice_axis}&index=${slice_index}`, '_blank')",
+                                click="window.open(`http://127.0.0.1:8050?axis=${slice_axis}&index=${slice_index}&data=${data_path}`, '_blank')",
+                                # click="window.open(`https://google.com?axis=${slice_axis}&index=${slice_index}&data=${data_path}`, '_blank')",
                             )
                 
             # print(layout)
