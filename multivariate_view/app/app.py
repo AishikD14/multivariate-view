@@ -727,6 +727,38 @@ class App:
 
         self.state.slice_index = 0  # reset index on axis change if needed
 
+    @change("slice_index")
+    @change("show_groups")
+    def update_slice(self, slice_index, **kwargs):
+        if 'visualize-slice' not in self.state.show_groups:
+            self.state.w_clip_x = [0, 1]
+            self.state.w_clip_y = [0, 1]
+            self.state.w_clip_z = [0, 1]
+            if hasattr(self, '_initial_update_slice_call'):
+                del self._initial_update_slice_call
+
+        else:
+            first_call = not hasattr(self, '_initial_update_slice_call')
+
+            if first_call:
+                self._initial_update_slice_call = True
+                return
+
+            fractional_slice_index = slice_index / self.state.max_slice_index
+
+            if self.state.slice_axis == "x":
+                self.state.w_clip_x = [fractional_slice_index, fractional_slice_index + 0.02]
+                self.state.w_clip_y = [0, 1]
+                self.state.w_clip_z = [0, 1]
+            elif self.state.slice_axis == "y":
+                self.state.w_clip_y = [fractional_slice_index, fractional_slice_index + 0.02]
+                self.state.w_clip_x = [0, 1]
+                self.state.w_clip_z = [0, 1]
+            else:
+                self.state.w_clip_z = [fractional_slice_index, fractional_slice_index + 0.02]
+                self.state.w_clip_x = [0, 1]
+                self.state.w_clip_y = [0, 1]
+
     @property
     def state(self):
         return self.server.state
@@ -931,6 +963,8 @@ class App:
                         # style="position: sticky; top: 3rem; z-index: 1; background: white;",
                     )
 
+                    # -------------------------------------------------------------------------------------
+
                     # Lense control
                     with v.VCard(
                         flat=True,
@@ -957,6 +991,8 @@ class App:
                             classes="ml-2",
                         )
 
+                    # --------------------------------------------------------------------------------------
+
                     # Color / Rotation management
                     with v.VCard(
                         flat=True,
@@ -972,6 +1008,8 @@ class App:
                             prepend_icon="mdi-rotate-360",
                             messages="Rotate color wheel",
                         )
+
+                    # ---------------------------------------------------------------------------------------
 
                     # Rendering settings
                     with v.VCard(
@@ -990,6 +1028,8 @@ class App:
                                 v_model=('w_rendering_bg', False),
                                 density='compact',
                             )
+
+                    # --------------------------------------------------------------------------------------
 
                     # Data sampling
                     with v.VCard(
@@ -1015,6 +1055,8 @@ class App:
                             prepend_icon="mdi-chart-scatter-plot-hexbin",
                             messages="Number of bins for the sampling algorithm",
                         )
+
+                    # ---------------------------------------------------------------------------------------
 
                     # Cropping
                     with v.VCard(
@@ -1051,6 +1093,8 @@ class App:
                             density='compact',
                             hide_details=True,
                         )
+
+                    # ----------------------------------------------------------------------------------------
 
                     # Data tuning
                     with v.VCard(
@@ -1213,6 +1257,8 @@ class App:
                                 hide_default_footer=True,
                             )
 
+                    # ----------------------------------------------------------------------------------------
+
                     # Filter clusters
                     with v.VCard(
                         flat=True,
@@ -1237,6 +1283,8 @@ class App:
                                 classes="ml-2",
                                 update_modelValue="cluster_array[name] = $event; array_modified=name; flushState('cluster_array')"
                             )
+
+                    # -----------------------------------------------------------------------------------------
 
                     # Visualize slice
                     with v.VCard(
@@ -1272,6 +1320,7 @@ class App:
                             step=1,
                             hide_details=True,
                             class_="mx-2",
+                            prepend_icon="mdi-magnify",
                         )
 
                         # Min and Max labels
