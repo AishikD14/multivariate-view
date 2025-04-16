@@ -39,8 +39,8 @@ EXAMPLE_DATA_PATH = (
 EXAMPLE_GOOGLE_DRIVE_ID = '1nI_hzrqbGBypUU7jMbWnF7-PkqNMiwqB'
 EXAMPLE_DATA_REF = 'https://doi.org/10.1038/s43246-022-00259-x'
 
-dataset = "default"
-# dataset = 'thigh_sarcoma'
+# dataset = "default"
+dataset = 'thigh_sarcoma'
 
 if dataset == "default":
     EXAMPLE_DATA_PATH = (
@@ -57,6 +57,9 @@ elif dataset == "thigh_sarcoma":
 class App:
     def __init__(self, server=None):
         self.server = get_server(server, client_type='vue3')
+
+        # Add this line to hook into browser connect
+        self.ctrl.on_client_connected.add(self._on_ready)
 
         # CLI
         self.server.cli.add_argument(
@@ -155,6 +158,9 @@ class App:
         if self.server.hot_reload:
             self.ctrl.on_server_reload.add(self._build_ui)
 
+    def _on_ready(self, **kwargs):
+        pass
+    
     def load_data(self, file_to_load):
         header, data = load_dataset(Path(file_to_load))
 
@@ -226,119 +232,11 @@ class App:
                 print("Number of supervoxels:", len(np.unique(segments)))
                 print("Range of labels:", np.min(segments), np.max(segments))
                 print("Shape of labels:", segments.shape)
+                self.segments_info = segments
 
             print("---------------------------------------------------")
 
-
-            unique_segments = np.unique(segments)  # Get unique segment IDs
-            segment_vectors = []
-
-            # Loop through each segment ID and compute mean feature vector
-            for segment_id in unique_segments:
-                mask = (segments == segment_id)  # Mask for current segment
-                mean_value = np.mean(data[mask], axis=0)
-                segment_vectors.append(mean_value)
-
-            # Convert the list of vectors to a NumPy array
-            segment_vectors = np.array(segment_vectors)
-
-            print("Segment vector shape ", segment_vectors.shape)
-
-            print("---------------------------------------------------")
-
-            # Perform t-SNE for dimensionality reduction
-            tsne = TSNE(n_components=2, random_state=42)
-            reduced_data = tsne.fit_transform(segment_vectors)
-
-            # Create dummy labels for visualization (use actual labels if available)
-            segment_labels = np.arange(len(reduced_data))
-
-            # Extract colors for each segment in the same order as `segment_ids`
-            # color_array = np.array([segmentColorDict[seg_id] for seg_id in segment_labels])
-
-            # Create a scatter plot of the t-SNE reduced data
-            plt.figure(figsize=(10, 8))
-
-            scatter = plt.scatter(reduced_data[:, 0], reduced_data[:, 1], c=segment_labels, cmap='viridis', alpha=0.7)
-            plt.colorbar(scatter)
-
-            plt.title('t-SNE Visualization of Segments')
-            plt.xlabel('t-SNE Component 1')
-            plt.ylabel('t-SNE Component 2')
-            plt.grid(True)
-            # plt.show()
-            # quit()
-
-            # Perform K-means clustering on the segment vectors to get an initial set of clusters
-
-            start_time = time.time()
-
-            # Number of clusters
-            self.num_clusters = 5
-
-            self.clusterArray = {}
-
-            for i in range(self.num_clusters):
-                self.clusterArray[i] = False
-
-            self.state.cluster_array = self.clusterArray
-
-            # Perform K-means clustering
-            kmeans = KMeans(n_clusters=self.num_clusters, random_state=42)
-            cluster_labels = kmeans.fit_predict(segment_vectors)
-
-            print(f"K-means clustering completed in {time.time() - start_time:.2f} seconds")
-
-            print("---------------------------------------------------")
-
-            cluster_color_dict = {}
-
-            colormap = plt.cm.get_cmap("tab10")
-
-            plt.figure(figsize=(10, 8))
-
-            for i in range(self.num_clusters):  # 5 clusters
-                cluster_color_dict[i] = colormap(i)
-                plt.scatter(reduced_data[cluster_labels == i, 0], reduced_data[cluster_labels == i, 1], label=f'Cluster {i+1}')
-
-            plt.legend()
-            plt.title('t-sne Visualization of Segments after K-means Clustering')
-            plt.xlabel('t-sne Component 1')
-            plt.ylabel('t-sne Component 2')
-            plt.grid(True)
-            # plt.show()
-            # quit()
-
-            for cluster_id in np.unique(cluster_labels):
-                cluster_color_dict[cluster_id] = list(map(lambda x: x, cluster_color_dict[cluster_id][:3]))
-
-            print("Cluster Color Dictionary for K-means clusters: ", cluster_color_dict)
-
-            print("---------------------------------------------------")
-
-            final_colored_volume = np.zeros(data.shape)
-            self.final_cluster_labels = np.zeros(data.shape)
-
-            final_colored_volume = final_colored_volume[:, :, :, :3]
-            self.final_cluster_labels = self.final_cluster_labels[:, :, :, 0]
-
-            for i in range(data.shape[0]):
-                for j in range(data.shape[1]):
-                    for k in range(data.shape[2]):
-                        segment_id = segments[i, j, k]
-                        cluster_id = cluster_labels[segment_id]
-                        self.final_cluster_labels[i, j, k] = cluster_id
-                        final_colored_volume[i, j, k] = cluster_color_dict[cluster_id]
-
-            print("Final colored volume shape ", final_colored_volume.shape)
-
-            print("Final cluster labels shape ", self.final_cluster_labels.shape)
-
-            flattened_final_colored_volume = final_colored_volume.reshape(np.prod(self.data_shape), 3)
-
-            print("Flattened final colored volume shape ", flattened_final_colored_volume.shape)
-
-            print("---------------------------------------------------")
+            flattened_final_colored_volume = self.handle_supervoxels(data, segments)
 
         # ------------------------------------------------------------------------------------------------
 
@@ -396,6 +294,120 @@ class App:
 
         # Trigger an update of the data
         self.update_gbc()
+
+    def handle_supervoxels(self, data, segments):
+        unique_segments = np.unique(segments)  # Get unique segment IDs
+        segment_vectors = []
+
+        # Loop through each segment ID and compute mean feature vector
+        for segment_id in unique_segments:
+            mask = (segments == segment_id)  # Mask for current segment
+            mean_value = np.mean(data[mask], axis=0)
+            segment_vectors.append(mean_value)
+
+        # Convert the list of vectors to a NumPy array
+        segment_vectors = np.array(segment_vectors)
+
+        print("Segment vector shape ", segment_vectors.shape)
+
+        print("---------------------------------------------------")
+
+        # Perform t-SNE for dimensionality reduction
+        tsne = TSNE(n_components=2, random_state=42)
+        reduced_data = tsne.fit_transform(segment_vectors)
+
+        # Create dummy labels for visualization (use actual labels if available)
+        segment_labels = np.arange(len(reduced_data))
+
+        # Extract colors for each segment in the same order as `segment_ids`
+        # color_array = np.array([segmentColorDict[seg_id] for seg_id in segment_labels])
+
+        # Create a scatter plot of the t-SNE reduced data
+        # plt.figure(figsize=(10, 8))
+
+        # scatter = plt.scatter(reduced_data[:, 0], reduced_data[:, 1], c=segment_labels, cmap='viridis', alpha=0.7)
+        # plt.colorbar(scatter)
+
+        # plt.title('t-SNE Visualization of Segments')
+        # plt.xlabel('t-SNE Component 1')
+        # plt.ylabel('t-SNE Component 2')
+        # plt.grid(True)
+        # plt.show()
+        # quit()
+
+        # Perform K-means clustering on the segment vectors to get an initial set of clusters
+
+        start_time = time.time()
+
+        # Number of clusters
+        self.num_clusters = 5
+
+        self.clusterArray = {}
+        self.indexArray = None
+
+        for i in range(self.num_clusters):
+            self.clusterArray[str(i)] = False
+
+        self.state.cluster_array = self.clusterArray
+
+        # Perform K-means clustering
+        kmeans = KMeans(n_clusters=self.num_clusters, random_state=42)
+        cluster_labels = kmeans.fit_predict(segment_vectors)
+
+        print(f"K-means clustering completed in {time.time() - start_time:.2f} seconds")
+
+        print("---------------------------------------------------")
+
+        cluster_color_dict = {}
+
+        colormap = plt.cm.get_cmap("tab10")
+
+        plt.figure(figsize=(10, 8))
+
+        for i in range(self.num_clusters):  # 5 clusters
+            cluster_color_dict[i] = colormap(i)
+            plt.scatter(reduced_data[cluster_labels == i, 0], reduced_data[cluster_labels == i, 1], label=f'Cluster {i+1}')
+
+        plt.legend()
+        plt.title('t-sne Visualization of Segments after K-means Clustering')
+        plt.xlabel('t-sne Component 1')
+        plt.ylabel('t-sne Component 2')
+        plt.grid(True)
+        # plt.show()
+        # quit()
+
+        for cluster_id in np.unique(cluster_labels):
+            cluster_color_dict[cluster_id] = list(map(lambda x: x, cluster_color_dict[cluster_id][:3]))
+
+        print("Cluster Color Dictionary for K-means clusters: ", cluster_color_dict)
+
+        print("---------------------------------------------------")
+
+        final_colored_volume = np.zeros(data.shape)
+        self.final_cluster_labels = np.zeros(data.shape)
+
+        final_colored_volume = final_colored_volume[:, :, :, :3]
+        self.final_cluster_labels = self.final_cluster_labels[:, :, :, 0]
+
+        for i in range(data.shape[0]):
+            for j in range(data.shape[1]):
+                for k in range(data.shape[2]):
+                    segment_id = segments[i, j, k]
+                    cluster_id = cluster_labels[segment_id]
+                    self.final_cluster_labels[i, j, k] = cluster_id
+                    final_colored_volume[i, j, k] = cluster_color_dict[cluster_id]
+
+        print("Final colored volume shape ", final_colored_volume.shape)
+
+        print("Final cluster labels shape ", self.final_cluster_labels.shape)
+
+        flattened_final_colored_volume = final_colored_volume.reshape(np.prod(self.data_shape), 3)
+
+        print("Flattened final colored volume shape ", flattened_final_colored_volume.shape)
+
+        print("---------------------------------------------------")
+
+        return flattened_final_colored_volume
 
     def create_table(self):
         if self.label_map is None:
@@ -584,7 +596,8 @@ class App:
         'w_clip_x',
         'w_clip_y',
         'w_clip_z',
-        'cluster_array'
+        'cluster_array',
+        'selected_supervoxel'
     )
     def update_mask_data(self, **kwargs):
         if any(x is None for x in (self.rgb_data, self.gbc_data)):
@@ -601,6 +614,8 @@ class App:
         mask_ref = self.volume_view.mask_reference
         mask_ref[self.nonzero_indices] = alpha
         self.volume_view.mask_data.Modified()
+
+        self.update_histograms(True)
 
         # Update the view
         self.ctrl.view_update()
@@ -761,6 +776,17 @@ class App:
                 self.state.w_clip_x = [0, 1]
                 self.state.w_clip_y = [0, 1]
 
+    @change("cluster_method")
+    @change("cluster_count")
+    @change("use_autoencoder")
+    def update_cluster_data(self, cluster_method, cluster_count, use_autoencoder, **kwargs):
+        print("Cluster method ", cluster_method)
+        print("Cluster count ", cluster_count)
+        print("Use autoencoder ", use_autoencoder)
+
+        self.ui = self._build_ui()
+        self.load_data(EXAMPLE_DATA_PATH)
+
     @property
     def state(self):
         return self.server.state
@@ -814,28 +840,52 @@ class App:
         # ------------------------------------------------------------------------------------------------
 
         if self.use_supervoxels:
-            self.indexArray = None
+            print("Selected supervoxel ", self.state.selected_supervoxel)
             if not clusterChanged and self.indexArray is not None:
                 # If the cluster array is not changed, we can use the indexArray to find indexes we have to set as 0 in clip_mask
+                print("--------------------------------------------------")
+                print("Not filtering out the clusters")
                 clip_mask[self.indexArray] = 0
             else:
+                print("--------------------------------------------------")
                 # Filter out only selected clusters
                 cluster_array = self.state.cluster_array
 
                 selected_clusters = [i for i, v in cluster_array.items() if v]
                 if len(selected_clusters) > 0:
+                    print("Actually filtering out the clusters and supervoxels")
                     print("Selected clusters ", selected_clusters)
+                    print("Selected supervoxel ", self.state.selected_supervoxel)
 
                     self.indexArray = np.zeros(self.data_shape, dtype=bool)
 
-                    # Loop through the selected clusters and Filter out only the selected clusters from the data and set the rest to zero
-                    for i in range(clip_mask.shape[0]):
-                        for j in range(clip_mask.shape[1]):
-                            for k in range(clip_mask.shape[2]):
-                                cluster_id = int(self.final_cluster_labels[i, j, k])
-                                if str(cluster_id) not in selected_clusters:
-                                    clip_mask[i, j, k] = 0
-                                    self.indexArray[i, j, k] = True
+                    # Convert selected_clusters to a set of ints for fast lookup
+                    selected_cluster_ids = set(map(int, selected_clusters))
+
+                    # Create mask for cluster condition
+                    cluster_ids = self.final_cluster_labels.astype(int)
+                    cluster_mask = ~np.isin(cluster_ids, list(selected_cluster_ids))
+
+                    if self.state.selected_supervoxel is not None:
+                    # Create mask for supervoxel mismatch
+                        supervoxel_mask = self.segments_info != self.state.selected_supervoxel
+
+                        # Combine masks: True where either condition is met
+                        combined_mask = cluster_mask | supervoxel_mask
+
+                    else:
+                        combined_mask = cluster_mask
+
+                    # Apply the mask
+                    clip_mask[combined_mask] = 0
+                    self.indexArray[combined_mask] = True
+
+                elif self.state.selected_supervoxel is not None:
+                    print("Filtering out the supervoxels")
+                    print("Selected supervoxel ", self.state.selected_supervoxel)
+
+                    mask = self.segments_info != self.state.selected_supervoxel
+                    clip_mask[mask] = 0
 
         # ------------------------------------------------------------------------------------------------
 
@@ -868,11 +918,47 @@ class App:
         server = self.server
         ctrl = self.ctrl
 
+        @ctrl.set("get_search")
+        def get_search(search):
+            print("******************************************************************")
+            print("******************************************************************")
+            print("Page Load Happened!!")
+            print("******************************************************************")
+            print("******************************************************************")
+            # Reset parameters on load
+            self.indexArray = None
+            for i in range(self.num_clusters):
+                self.clusterArray[str(i)] = False
+
+            self.state.cluster_array = self.clusterArray
+            self.state.dirty("cluster_array")
+            # ----------------------------------------------------
+            if not search or search == "?":
+                print("No search params")
+                self.state.selected_supervoxel = None
+                return
+            # -----------------------------------------------------
+            print(search)
+            query_params = search[1:].split("&")
+
+            for param in query_params:
+                key, value = param.split("=")
+                if key == "cluster_method":
+                    self.state.cluster_method = value
+                elif key == "cluster_count":
+                    self.state.cluster_count = int(value)
+                elif key == "use_autoencoder":
+                    self.state.use_autoencoder = value
+                elif key == "selected_supervoxel":
+                    self.state.selected_supervoxel = int(value)
+
         self.state.trame__title = "MultivariateView"
         self.state.trame__favicon = ASSETS.favicon
 
         with VAppLayout(server, full_height=True) as layout:
             client.Style('html { overflow-y: hidden; }')
+
+            client.ClientTriggers(mounted=(ctrl.get_search, "[window.location.search]"))
 
             with vtk.VtkRemoteView(
                 self.render_window, interactive_ratio=1
