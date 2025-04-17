@@ -15,6 +15,7 @@ from trame.ui.vuetify3 import VAppLayout
 from trame.widgets import client, html, plotly, vtk, vuetify3 as v
 from multivariate_view.widgets import radvolviz
 from .assets import ASSETS
+from scipy import ndimage
 
 from .compute import (
     compute_gbc,
@@ -299,17 +300,16 @@ class App:
         self.update_gbc()
 
     def handle_supervoxels(self, data, segments):
-        unique_segments = np.unique(segments)  # Get unique segment IDs
-        segment_vectors = []
+        unique_segments = np.unique(segments)
+        num_segments = unique_segments.size
+        num_channels = data.shape[-1]
 
-        # Loop through each segment ID and compute mean feature vector
-        for segment_id in unique_segments:
-            mask = (segments == segment_id)  # Mask for current segment
-            mean_value = np.mean(data[mask], axis=0)
-            segment_vectors.append(mean_value)
+        # Preallocate result array
+        segment_vectors = np.zeros((num_segments, num_channels), dtype=data.dtype)
 
-        # Convert the list of vectors to a NumPy array
-        segment_vectors = np.array(segment_vectors)
+        # Compute mean per channel per segment
+        for c in range(num_channels):
+            segment_vectors[:, c] = ndimage.mean(data[..., c], labels=segments, index=unique_segments)
 
         print("Segment vector shape ", segment_vectors.shape)
 
@@ -358,13 +358,19 @@ class App:
         final_colored_volume = final_colored_volume[:, :, :, :3]
         self.final_cluster_labels = self.final_cluster_labels[:, :, :, 0]
 
-        for i in range(data.shape[0]):
-            for j in range(data.shape[1]):
-                for k in range(data.shape[2]):
-                    segment_id = segments[i, j, k]
-                    cluster_id = cluster_labels[segment_id]
-                    self.final_cluster_labels[i, j, k] = cluster_id
-                    final_colored_volume[i, j, k] = cluster_color_dict[cluster_id]
+        segment_ids = segments  
+        cluster_ids = cluster_labels[segment_ids]
+
+        # Assign final cluster labels
+        self.final_cluster_labels = cluster_ids
+
+        max_cluster_id = max(cluster_color_dict.keys())
+        color_array = np.zeros((max_cluster_id + 1, 3), dtype=np.float32) 
+
+        for cid, color in cluster_color_dict.items():
+            color_array[cid] = color 
+
+        final_colored_volume[:] = color_array[cluster_ids]
 
         print("Final colored volume shape ", final_colored_volume.shape)
 
@@ -830,14 +836,15 @@ class App:
 
                     # Convert selected_clusters and selected_supervoxels to sets of ints
                     selected_cluster_ids = set(map(int, selected_clusters))
-                    selected_supervoxels = np.array(self.state.selected_supervoxels, dtype=self.segments_info.dtype)
 
                     # Create mask for cluster condition
                     cluster_ids = self.final_cluster_labels.astype(int)
                     cluster_mask = ~np.isin(cluster_ids, list(selected_cluster_ids))
 
                     if self.state.selected_supervoxels is not None:
-                    # Create mask for supervoxel mismatch
+                        selected_supervoxels = np.array(self.state.selected_supervoxels, dtype=self.segments_info.dtype)
+
+                        # Create mask for supervoxel mismatch
                         supervoxel_mask = ~np.isin(self.segments_info, selected_supervoxels)
 
                         # Combine masks: True where either condition is met
