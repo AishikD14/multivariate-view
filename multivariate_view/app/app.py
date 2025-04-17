@@ -151,6 +151,9 @@ class App:
         self.rgb_data = None
         self.opacity_data = None
 
+        # Set the default number of clusters to 5
+        self.num_clusters = 5
+
         self.ui = self._build_ui()
         self.load_data(file_to_load)
         self.create_table()
@@ -312,35 +315,12 @@ class App:
 
         print("---------------------------------------------------")
 
-        # Perform t-SNE for dimensionality reduction
-        tsne = TSNE(n_components=2, random_state=42)
-        reduced_data = tsne.fit_transform(segment_vectors)
-
-        # Create dummy labels for visualization (use actual labels if available)
-        segment_labels = np.arange(len(reduced_data))
-
-        # Extract colors for each segment in the same order as `segment_ids`
-        # color_array = np.array([segmentColorDict[seg_id] for seg_id in segment_labels])
-
-        # Create a scatter plot of the t-SNE reduced data
-        # plt.figure(figsize=(10, 8))
-
-        # scatter = plt.scatter(reduced_data[:, 0], reduced_data[:, 1], c=segment_labels, cmap='viridis', alpha=0.7)
-        # plt.colorbar(scatter)
-
-        # plt.title('t-SNE Visualization of Segments')
-        # plt.xlabel('t-SNE Component 1')
-        # plt.ylabel('t-SNE Component 2')
-        # plt.grid(True)
-        # plt.show()
-        # quit()
-
         # Perform K-means clustering on the segment vectors to get an initial set of clusters
 
         start_time = time.time()
 
         # Number of clusters
-        self.num_clusters = 5
+        # self.num_clusters = num_clusters
 
         self.clusterArray = {}
         self.indexArray = None
@@ -362,19 +342,8 @@ class App:
 
         colormap = plt.cm.get_cmap("tab10")
 
-        plt.figure(figsize=(10, 8))
-
         for i in range(self.num_clusters):  # 5 clusters
             cluster_color_dict[i] = colormap(i)
-            plt.scatter(reduced_data[cluster_labels == i, 0], reduced_data[cluster_labels == i, 1], label=f'Cluster {i+1}')
-
-        plt.legend()
-        plt.title('t-sne Visualization of Segments after K-means Clustering')
-        plt.xlabel('t-sne Component 1')
-        plt.ylabel('t-sne Component 2')
-        plt.grid(True)
-        # plt.show()
-        # quit()
 
         for cluster_id in np.unique(cluster_labels):
             cluster_color_dict[cluster_id] = list(map(lambda x: x, cluster_color_dict[cluster_id][:3]))
@@ -785,7 +754,8 @@ class App:
         print("Use autoencoder ", use_autoencoder)
 
         # self.ui = self._build_ui()
-        # self.load_data(EXAMPLE_DATA_PATH)
+        self.num_clusters = int(cluster_count)
+        self.load_data(EXAMPLE_DATA_PATH)
 
     @property
     def state(self):
