@@ -597,7 +597,7 @@ class App:
         'w_clip_y',
         'w_clip_z',
         'cluster_array',
-        'selected_supervoxel'
+        'selected_supervoxels'
     )
     def update_mask_data(self, **kwargs):
         if any(x is None for x in (self.rgb_data, self.gbc_data)):
@@ -784,8 +784,8 @@ class App:
         print("Cluster count ", cluster_count)
         print("Use autoencoder ", use_autoencoder)
 
-        self.ui = self._build_ui()
-        self.load_data(EXAMPLE_DATA_PATH)
+        # self.ui = self._build_ui()
+        # self.load_data(EXAMPLE_DATA_PATH)
 
     @property
     def state(self):
@@ -840,7 +840,6 @@ class App:
         # ------------------------------------------------------------------------------------------------
 
         if self.use_supervoxels:
-            print("Selected supervoxel ", self.state.selected_supervoxel)
             if not clusterChanged and self.indexArray is not None:
                 # If the cluster array is not changed, we can use the indexArray to find indexes we have to set as 0 in clip_mask
                 print("--------------------------------------------------")
@@ -855,20 +854,21 @@ class App:
                 if len(selected_clusters) > 0:
                     print("Actually filtering out the clusters and supervoxels")
                     print("Selected clusters ", selected_clusters)
-                    print("Selected supervoxel ", self.state.selected_supervoxel)
+                    print("Selected supervoxels ", self.state.selected_supervoxels)
 
                     self.indexArray = np.zeros(self.data_shape, dtype=bool)
 
-                    # Convert selected_clusters to a set of ints for fast lookup
+                    # Convert selected_clusters and selected_supervoxels to sets of ints
                     selected_cluster_ids = set(map(int, selected_clusters))
+                    selected_supervoxels = np.array(self.state.selected_supervoxels, dtype=self.segments_info.dtype)
 
                     # Create mask for cluster condition
                     cluster_ids = self.final_cluster_labels.astype(int)
                     cluster_mask = ~np.isin(cluster_ids, list(selected_cluster_ids))
 
-                    if self.state.selected_supervoxel is not None:
+                    if self.state.selected_supervoxels is not None:
                     # Create mask for supervoxel mismatch
-                        supervoxel_mask = self.segments_info != self.state.selected_supervoxel
+                        supervoxel_mask = ~np.isin(self.segments_info, selected_supervoxels)
 
                         # Combine masks: True where either condition is met
                         combined_mask = cluster_mask | supervoxel_mask
@@ -880,11 +880,11 @@ class App:
                     clip_mask[combined_mask] = 0
                     self.indexArray[combined_mask] = True
 
-                elif self.state.selected_supervoxel is not None:
+                elif self.state.selected_supervoxels is not None:
                     print("Filtering out the supervoxels")
-                    print("Selected supervoxel ", self.state.selected_supervoxel)
+                    print("Selected supervoxels ", self.state.selected_supervoxels)
 
-                    mask = self.segments_info != self.state.selected_supervoxel
+                    mask = ~np.isin(self.segments_info, self.state.selected_supervoxels)
                     clip_mask[mask] = 0
 
         # ------------------------------------------------------------------------------------------------
@@ -935,7 +935,7 @@ class App:
             # ----------------------------------------------------
             if not search or search == "?":
                 print("No search params")
-                self.state.selected_supervoxel = None
+                self.state.selected_supervoxels = None
                 return
             # -----------------------------------------------------
             print(search)
@@ -950,7 +950,10 @@ class App:
                 elif key == "use_autoencoder":
                     self.state.use_autoencoder = value
                 elif key == "selected_supervoxel":
-                    self.state.selected_supervoxel = int(value)
+                    # Parase coomma separeted values and put them in a list
+                    value_list = list(map(int, value.split("%2C")))
+                    print("Selected supervoxels list", value_list)
+                    self.state.selected_supervoxels = value_list
 
         self.state.trame__title = "MultivariateView"
         self.state.trame__favicon = ASSETS.favicon
