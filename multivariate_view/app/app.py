@@ -152,13 +152,9 @@ class App:
         self.rgb_data = None
         self.opacity_data = None
 
-        # Set the default number of clusters to 5
+        # Set the default values
         self.num_clusters = 5
-
-        # Set the cluster method to KMeans
         self.cluster_method = "kmeans"
-
-        # Set the use_autoencoder flag
         self.use_autoencoder = False
 
         self.ui = self._build_ui()
@@ -758,15 +754,18 @@ class App:
     @change("cluster_method")
     @change("cluster_count")
     @change("use_autoencoder")
+    @change("normalize_channels")
     def update_cluster_data(self, **kwargs):
         # Get values from arguments
         cluster_method = kwargs.get('cluster_method', None)
         cluster_count = kwargs.get('cluster_count', None)
         use_autoencoder = kwargs.get('use_autoencoder', None)
+        normalize_channels = kwargs.get('normalize_channels', None)
 
         print("Cluster method ", cluster_method)
         print("Cluster count ", cluster_count)
         print("Use autoencoder ", use_autoencoder)
+        print("Normalize channels ", normalize_channels)
 
         if cluster_count is not None:
             self.num_clusters = int(cluster_count)
@@ -774,6 +773,8 @@ class App:
             self.cluster_method = cluster_method
         if use_autoencoder is not None:
             self.use_autoencoder = use_autoencoder
+        if normalize_channels is not None:
+            self.normalize_channels = normalize_channels
 
         # self.ui = self._build_ui()
         self.load_data(EXAMPLE_DATA_PATH)
@@ -843,7 +844,6 @@ class App:
 
                 selected_clusters = [i for i, v in cluster_array.items() if v]
                 if len(selected_clusters) > 0:
-                    print("Actually filtering out the clusters and supervoxels")
                     print("Selected clusters ", selected_clusters)
                     print("Selected supervoxels ", self.state.selected_supervoxels)
 
@@ -873,7 +873,6 @@ class App:
                     self.indexArray[combined_mask] = True
 
                 elif self.state.selected_supervoxels is not None:
-                    print("Filtering out the supervoxels")
                     print("Selected supervoxels ", self.state.selected_supervoxels)
 
                     mask = ~np.isin(self.segments_info, self.state.selected_supervoxels)
@@ -919,10 +918,16 @@ class App:
             print("******************************************************************")
             # Reset parameters on load
             self.indexArray = None
+            self.num_clusters = 5
+            self.cluster_method = "kmeans"
+            self.use_autoencoder = False
+            self.normalize_channels = False
+
             for i in range(self.num_clusters):
                 self.clusterArray[str(i)] = False
 
             self.state.cluster_array = self.clusterArray
+            self.state.selected_supervoxels = None
             self.state.dirty("cluster_array")
             # ----------------------------------------------------
             if not search or search == "?":
@@ -944,8 +949,9 @@ class App:
                 elif key == "selected_supervoxel":
                     # Parase coomma separeted values and put them in a list
                     value_list = list(map(int, value.split("%2C")))
-                    print("Selected supervoxels list", value_list)
                     self.state.selected_supervoxels = value_list
+                elif key == "normalize_channels":
+                    self.state.normalize_channels = value
 
         self.state.trame__title = "MultivariateView"
         self.state.trame__favicon = ASSETS.favicon
