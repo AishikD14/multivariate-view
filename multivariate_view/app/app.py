@@ -155,6 +155,12 @@ class App:
         # Set the default number of clusters to 5
         self.num_clusters = 5
 
+        # Set the cluster method to KMeans
+        self.cluster_method = "kmeans"
+
+        # Set the use_autoencoder flag
+        self.use_autoencoder = False
+
         self.ui = self._build_ui()
         self.load_data(file_to_load)
         self.create_table()
@@ -319,9 +325,6 @@ class App:
 
         start_time = time.time()
 
-        # Number of clusters
-        # self.num_clusters = num_clusters
-
         self.clusterArray = {}
         self.indexArray = None
 
@@ -330,11 +333,12 @@ class App:
 
         self.state.cluster_array = self.clusterArray
 
-        # Perform K-means clustering
-        kmeans = KMeans(n_clusters=self.num_clusters, random_state=42)
-        cluster_labels = kmeans.fit_predict(segment_vectors)
+        if self.cluster_method == "kmeans":
+            # Perform K-means clustering
+            kmeans = KMeans(n_clusters=self.num_clusters, random_state=42)
+            cluster_labels = kmeans.fit_predict(segment_vectors)
 
-        print(f"K-means clustering completed in {time.time() - start_time:.2f} seconds")
+            print(f"K-means clustering completed in {time.time() - start_time:.2f} seconds")
 
         print("---------------------------------------------------")
 
@@ -754,13 +758,24 @@ class App:
     @change("cluster_method")
     @change("cluster_count")
     @change("use_autoencoder")
-    def update_cluster_data(self, cluster_method, cluster_count, use_autoencoder, **kwargs):
+    def update_cluster_data(self, **kwargs):
+        # Get values from arguments
+        cluster_method = kwargs.get('cluster_method', None)
+        cluster_count = kwargs.get('cluster_count', None)
+        use_autoencoder = kwargs.get('use_autoencoder', None)
+
         print("Cluster method ", cluster_method)
         print("Cluster count ", cluster_count)
         print("Use autoencoder ", use_autoencoder)
 
+        if cluster_count is not None:
+            self.num_clusters = int(cluster_count)
+        if cluster_method is not None:
+            self.cluster_method = cluster_method
+        if use_autoencoder is not None:
+            self.use_autoencoder = use_autoencoder
+
         # self.ui = self._build_ui()
-        self.num_clusters = int(cluster_count)
         self.load_data(EXAMPLE_DATA_PATH)
 
     @property
