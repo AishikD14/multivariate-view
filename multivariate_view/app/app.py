@@ -34,25 +34,23 @@ warnings.filterwarnings("ignore")
 
 # We will cache downloaded data examples in this directory.
 EXAMPLE_DATA_DIR = Path(__file__).parent.parent.parent / 'data'
-EXAMPLE_DATA_PATH = (
-    EXAMPLE_DATA_DIR / 'CeCoFeGd_doi_10.1038_s43246-022-00259-x.h5'
-)
 EXAMPLE_GOOGLE_DRIVE_ID = '1nI_hzrqbGBypUU7jMbWnF7-PkqNMiwqB'
 EXAMPLE_DATA_REF = 'https://doi.org/10.1038/s43246-022-00259-x'
 
-# dataset = "default"
-dataset = 'thigh_sarcoma'
-
-if dataset == "default":
-    EXAMPLE_DATA_PATH = (
-        EXAMPLE_DATA_DIR / 'CeCoFeGd_doi_10.1038_s43246-022-00259-x.h5'
-    )
-    EXAMPLE_SEGMENT_PATH = EXAMPLE_DATA_DIR / 'volume_labels.npy'
-elif dataset == "thigh_sarcoma":
-    EXAMPLE_DATA_PATH = (
-        EXAMPLE_DATA_DIR / 'thigh_sarcoma.h5'
-    )
-    EXAMPLE_SEGMENT_PATH = EXAMPLE_DATA_DIR / 'volume_labels_thigh_sarcoma.npy'
+data_dict = {
+    "CeCoFeGd": {
+        "data_path": (
+            EXAMPLE_DATA_DIR / 'CeCoFeGd_doi_10.1038_s43246-022-00259-x.h5'
+        ),
+        "segment_path": EXAMPLE_DATA_DIR / 'volume_labels_CeCoFeGd.npy',
+    },
+    "thigh_sarcoma": {
+        "data_path": (
+            EXAMPLE_DATA_DIR / 'thigh_sarcoma.h5'
+        ),
+        "segment_path": EXAMPLE_DATA_DIR / 'volume_labels_thigh_sarcoma.npy',
+    },
+}
 
 @TrameApp()
 class App:
@@ -118,31 +116,6 @@ class App:
         # Set this if you want label map names other than "0, 1, 2, ..."
         self.label_map_names = None
 
-        file_to_load = args.data
-        if file_to_load is None:
-            EXAMPLE_DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-            print(
-                '\nData path was not provided using `--data`'
-                f'\nDefaulting to example: {EXAMPLE_DATA_PATH.name}'
-            )
-
-            citation_str = f'* Example data citation: {EXAMPLE_DATA_REF} *'
-            boundary_str = '*' * len(citation_str)
-            print(f'\n{boundary_str}\n{citation_str}\n{boundary_str}\n')
-
-            if not EXAMPLE_DATA_PATH.exists():
-                # Automatically download the example dataset, and put it in the
-                # data directory.
-                print(f'Downloading example dataset to: {EXAMPLE_DATA_PATH}')
-                download_file_from_google_drive(
-                    EXAMPLE_GOOGLE_DRIVE_ID, EXAMPLE_DATA_PATH
-                )
-
-            file_to_load = EXAMPLE_DATA_PATH
-
-        self.state.data_path = str(file_to_load)
-
         self.volume_view = VolumeView()
 
         self.unrotated_gbc = None
@@ -156,9 +129,10 @@ class App:
         self.num_clusters = 5
         self.cluster_method = "kmeans"
         self.use_autoencoder = False
+        self.dataset = "CeCoFeGd"
 
         self.ui = self._build_ui()
-        self.load_data(file_to_load)
+        self.load_data()
         self.create_table()
 
         if self.server.hot_reload:
@@ -167,10 +141,36 @@ class App:
     def _on_ready(self, **kwargs):
         pass
     
-    def load_data(self, file_to_load):
-        header, data = load_dataset(Path(file_to_load))
+    def load_data(self):
+        try:
+            header, data = load_dataset(Path(data_dict[self.dataset]["data_path"]))
 
-        if dataset == "thigh_sarcoma":
+        except Exception as e:
+            print(f"Error loading dataset: {e}")
+
+            self.dataset == "CeCoFeGd"
+
+            EXAMPLE_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+            print(
+                f'\nDefaulting to example: {data_dict[self.dataset]["data_path"].name}'
+            )
+
+            citation_str = f'* Example data citation: {EXAMPLE_DATA_REF} *'
+            boundary_str = '*' * len(citation_str)
+            print(f'\n{boundary_str}\n{citation_str}\n{boundary_str}\n')
+
+            if not data_dict[self.dataset]["data_path"].exists():
+                # Automatically download the example dataset, and put it in the
+                # data directory.
+                print(f'Downloading example dataset to: {data_dict[self.dataset]["data_path"]}')
+                download_file_from_google_drive(
+                    EXAMPLE_GOOGLE_DRIVE_ID, data_dict[self.dataset]["data_path"]
+                )
+
+            header, data = load_dataset(Path(data_dict[self.dataset]["data_path"]))
+
+        if self.dataset == "thigh_sarcoma":
             header[0], header[1] = header[1], header[0]
             data[:, :, :, [0, 1]] = data[:, :, :, [1, 0]]
 
@@ -228,12 +228,13 @@ class App:
 
             print("---------------------------------------------------")
 
-            if not EXAMPLE_SEGMENT_PATH.exists():
+            if not data_dict[self.dataset]["segment_path"].exists():
                 # Generate supervoxels
                 segments, _ = self.generate_supervoxel(data, True)
+                
             else:
                 # Load the supervoxels
-                segments = np.load(EXAMPLE_SEGMENT_PATH)
+                segments = np.load(data_dict[self.dataset]["segment_path"])
                 print("Labels loaded.")
                 print("Number of supervoxels:", len(np.unique(segments)))
                 print("Range of labels:", np.min(segments), np.max(segments))
@@ -755,17 +756,22 @@ class App:
     @change("cluster_count")
     @change("use_autoencoder")
     @change("normalize_channels")
+    @change("dataset")
     def update_cluster_data(self, **kwargs):
         # Get values from arguments
         cluster_method = kwargs.get('cluster_method', None)
         cluster_count = kwargs.get('cluster_count', None)
         use_autoencoder = kwargs.get('use_autoencoder', None)
         normalize_channels = kwargs.get('normalize_channels', None)
+        dataset = kwargs.get('dataset', None)
 
         print("Cluster method ", cluster_method)
         print("Cluster count ", cluster_count)
         print("Use autoencoder ", use_autoencoder)
         print("Normalize channels ", normalize_channels)
+        print("Dataset ", dataset)
+
+        print("-------------------------------------------------------------")
 
         if cluster_count is not None:
             self.num_clusters = int(cluster_count)
@@ -775,9 +781,11 @@ class App:
             self.use_autoencoder = use_autoencoder
         if normalize_channels is not None:
             self.normalize_channels = normalize_channels
+        if dataset is not None:
+            self.dataset = dataset
 
         # self.ui = self._build_ui()
-        self.load_data(EXAMPLE_DATA_PATH)
+        self.load_data()
 
     @property
     def state(self):
@@ -928,6 +936,7 @@ class App:
 
             self.state.cluster_array = self.clusterArray
             self.state.selected_supervoxels = None
+            self.state.dataset = "CeCoFeGd"
             self.state.dirty("cluster_array")
             # ----------------------------------------------------
             if not search or search == "?":
@@ -952,6 +961,8 @@ class App:
                     self.state.selected_supervoxels = value_list
                 elif key == "normalize_channels":
                     self.state.normalize_channels = value
+                elif key == "dataset":
+                    self.state.dataset = value
 
         self.state.trame__title = "MultivariateView"
         self.state.trame__favicon = ASSETS.favicon
@@ -1424,8 +1435,7 @@ class App:
                                 color="primary",
                                 class_="mx-2 mt-2",
                                 style="margin-top: 20px !important; margin-left: 30% !important;",
-                                click="window.open(`http://127.0.0.1:8050?axis=${slice_axis}&index=${slice_index}&data=${data_path}`, '_blank')",
-                                # click="window.open(`https://google.com?axis=${slice_axis}&index=${slice_index}&data=${data_path}`, '_blank')",
+                                click="window.open(`http://127.0.0.1:8050?axis=${slice_axis}&index=${slice_index}&data=${data_path}`, '_blank')"
                             )
                 
             # print(layout)
@@ -1450,7 +1460,7 @@ class App:
 
         # Save the labels
         if save_data:
-            np.save(EXAMPLE_SEGMENT_PATH, labels)
+            np.save(data_dict[self.dataset]["segment_path"], labels)
 
             print("Labels saved.")
 
