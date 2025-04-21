@@ -40,7 +40,7 @@ EXAMPLE_DATA_REF = 'https://doi.org/10.1038/s43246-022-00259-x'
 data_dict = {
     "CeCoFeGd": {
         "data_path": (
-            EXAMPLE_DATA_DIR / 'CeCoFeGd_doi_10.1038_s43246-022-00259-x.h5'
+            EXAMPLE_DATA_DIR / 'CeCoFeGd.h5'
         ),
         "segment_path": EXAMPLE_DATA_DIR / 'volume_labels_CeCoFeGd.npy',
     },
