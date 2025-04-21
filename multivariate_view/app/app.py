@@ -243,7 +243,7 @@ class App:
 
             print("---------------------------------------------------")
 
-            flattened_final_colored_volume = self.handle_supervoxels(data, segments)
+            self.handle_supervoxels(data, segments)
 
         # ------------------------------------------------------------------------------------------------
 
@@ -290,7 +290,7 @@ class App:
         
             print("---------------------------------------------------")
 
-            nonzero_final_colored_volume = flattened_final_colored_volume[self.nonzero_indices]
+            nonzero_final_colored_volume = self.flattened_final_colored_volume[self.nonzero_indices]
             print("Nonzero final colored volume shape ", nonzero_final_colored_volume.shape)
 
             self.kmeans_rgb_data = nonzero_final_colored_volume
@@ -377,13 +377,11 @@ class App:
 
         print("Final cluster labels shape ", self.final_cluster_labels.shape)
 
-        flattened_final_colored_volume = final_colored_volume.reshape(np.prod(self.data_shape), 3)
+        self.flattened_final_colored_volume = final_colored_volume.reshape(np.prod(self.data_shape), 3)
 
-        print("Flattened final colored volume shape ", flattened_final_colored_volume.shape)
+        print("Flattened final colored volume shape ", self.flattened_final_colored_volume.shape)
 
         print("---------------------------------------------------")
-
-        return flattened_final_colored_volume
 
     def create_table(self):
         if self.label_map is None:
@@ -691,7 +689,7 @@ class App:
         self.nonzero_data = flattened_data[self.nonzero_indices]
 
         if self.use_supervoxels:
-            self.filtered_kmeans_rgb_data = self.kmeans_rgb_data[self.nonzero_indices]
+            self.filtered_kmeans_rgb_data = self.flattened_final_colored_volume[self.nonzero_indices]
 
         # Trigger an update of the data
         self.update_gbc()
@@ -784,8 +782,9 @@ class App:
         if dataset is not None:
             self.dataset = dataset
 
-        # self.ui = self._build_ui()
-        self.load_data()
+        if dataset is not None:
+            # self.ui = self._build_ui()
+            self.load_data()
 
     @property
     def state(self):
@@ -931,10 +930,18 @@ class App:
             self.use_autoencoder = False
             self.normalize_channels = False
 
-            for i in range(self.num_clusters):
-                self.clusterArray[str(i)] = False
+            if self.use_supervoxels:
+                for i in range(self.num_clusters):
+                    self.clusterArray[str(i)] = False
+                self.state.cluster_array = self.clusterArray
 
-            self.state.cluster_array = self.clusterArray
+            for key in self.state.data_channels.keys():
+                array = self.arrays_raw[key]
+                min_val = np.nanmin(array)
+                max_val = np.nanmax(array)
+                print("Min and max values ", min_val, max_val)
+                self.state.data_channels[key]['focus_range'] = [min_val, max_val]
+
             self.state.selected_supervoxels = None
             self.state.dataset = "CeCoFeGd"
             self.state.dirty("cluster_array")
@@ -950,18 +957,24 @@ class App:
             for param in query_params:
                 key, value = param.split("=")
                 if key == "cluster_method":
+                    print("1")
                     self.state.cluster_method = value
                 elif key == "cluster_count":
+                    print("2")
                     self.state.cluster_count = int(value)
                 elif key == "use_autoencoder":
+                    print("3")
                     self.state.use_autoencoder = value
                 elif key == "selected_supervoxel":
+                    print("4")
                     # Parase coomma separeted values and put them in a list
                     value_list = list(map(int, value.split("%2C")))
                     self.state.selected_supervoxels = value_list
                 elif key == "normalize_channels":
+                    print("5")
                     self.state.normalize_channels = value
                 elif key == "dataset":
+                    print("6")
                     self.state.dataset = value
 
         self.state.trame__title = "MultivariateView"
