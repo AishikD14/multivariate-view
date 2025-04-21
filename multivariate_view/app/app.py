@@ -576,13 +576,29 @@ class App:
     def update_mask_data(self, **kwargs):
         if any(x is None for x in (self.rgb_data, self.gbc_data)):
             return
-        
-        # Get value of cluster_array from arguments
-        new_cluster_array = kwargs.get('cluster_array', None)
-        clusterChanged = False
-        if new_cluster_array is not None and (self.clusterArray != new_cluster_array):
-            clusterChanged = True
-            self.clusterArray = new_cluster_array
+
+        if 'filter-cluster' in self.state.show_groups:
+            # Get value of cluster_array from arguments
+            new_cluster_array = kwargs.get('cluster_array', None)
+            clusterChanged = False
+            if new_cluster_array is not None and (self.clusterArray != new_cluster_array):
+                clusterChanged = True
+                self.clusterArray = new_cluster_array
+
+        else:
+            clusterChanged = False
+
+            for i in range(self.num_clusters):
+                if self.state.cluster_array[str(i)]:
+                    clusterChanged = True
+                    break
+            
+            if clusterChanged:
+                # Set all values of clusterArray to False
+                for i in range(self.num_clusters):
+                    self.clusterArray[str(i)] = False
+
+                self.state.cluster_array = self.clusterArray # UI not updating
 
         alpha = self.compute_alpha(clusterChanged)
         mask_ref = self.volume_view.mask_reference
@@ -850,12 +866,15 @@ class App:
                 cluster_array = self.state.cluster_array
 
                 selected_clusters = [i for i, v in cluster_array.items() if v]
+
+                print("Selected clusters ", selected_clusters)
+                print("Selected supervoxels ", self.state.selected_supervoxels)
+
+                cluster_mask = np.zeros(self.data_shape, dtype=bool)
+                supervoxel_mask = np.zeros(self.data_shape, dtype=bool)
+                self.indexArray = np.zeros(self.data_shape, dtype=bool)
+                
                 if len(selected_clusters) > 0:
-                    print("Selected clusters ", selected_clusters)
-                    print("Selected supervoxels ", self.state.selected_supervoxels)
-
-                    self.indexArray = np.zeros(self.data_shape, dtype=bool)
-
                     # Convert selected_clusters and selected_supervoxels to sets of ints
                     selected_cluster_ids = set(map(int, selected_clusters))
 
@@ -863,27 +882,18 @@ class App:
                     cluster_ids = self.final_cluster_labels.astype(int)
                     cluster_mask = ~np.isin(cluster_ids, list(selected_cluster_ids))
 
-                    if self.state.selected_supervoxels is not None:
-                        selected_supervoxels = np.array(self.state.selected_supervoxels, dtype=self.segments_info.dtype)
+                if self.state.selected_supervoxels is not None:
+                    selected_supervoxels = np.array(self.state.selected_supervoxels, dtype=self.segments_info.dtype)
 
-                        # Create mask for supervoxel mismatch
-                        supervoxel_mask = ~np.isin(self.segments_info, selected_supervoxels)
+                    # Create mask for supervoxel mismatch
+                    supervoxel_mask = ~np.isin(self.segments_info, selected_supervoxels)
 
-                        # Combine masks: True where either condition is met
-                        combined_mask = cluster_mask | supervoxel_mask
+                # Combine masks: True where either condition is met
+                combined_mask = cluster_mask | supervoxel_mask
 
-                    else:
-                        combined_mask = cluster_mask
-
-                    # Apply the mask
-                    clip_mask[combined_mask] = 0
-                    self.indexArray[combined_mask] = True
-
-                elif self.state.selected_supervoxels is not None:
-                    print("Selected supervoxels ", self.state.selected_supervoxels)
-
-                    mask = ~np.isin(self.segments_info, self.state.selected_supervoxels)
-                    clip_mask[mask] = 0
+                # Apply the mask
+                clip_mask[combined_mask] = 0
+                self.indexArray[combined_mask] = True
 
         # ------------------------------------------------------------------------------------------------
 
