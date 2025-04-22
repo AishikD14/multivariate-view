@@ -857,8 +857,6 @@ class App:
         if self.use_supervoxels:
             if not clusterChanged and self.indexArray is not None:
                 # If the cluster array is not changed, we can use the indexArray to find indexes we have to set as 0 in clip_mask
-                print("--------------------------------------------------")
-                print("Not filtering out the clusters")
                 clip_mask[self.indexArray] = 0
             else:
                 print("--------------------------------------------------")
@@ -949,11 +947,11 @@ class App:
                 array = self.arrays_raw[key]
                 min_val = np.nanmin(array)
                 max_val = np.nanmax(array)
-                print("Min and max values ", min_val, max_val)
                 self.state.data_channels[key]['focus_range'] = [min_val, max_val]
 
             self.state.selected_supervoxels = None
             self.state.dataset = "CeCoFeGd"
+            self.state.normalize_channels = False
             self.state.dirty("cluster_array")
             # ----------------------------------------------------
             if not search or search == "?":
