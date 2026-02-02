@@ -22,6 +22,16 @@ from .compute import (
 from .io import load_dataset
 from .volume_view import VolumeView
 
+from sklearn.cluster import KMeans
+from sklearn.manifold import TSNE
+from matplotlib import pyplot as plt
+from scipy import ndimage
+import time
+from scipy.spatial import cKDTree
+import warnings
+
+# Ignore warnings
+warnings.filterwarnings("ignore")
 
 # We will cache downloaded data examples in this directory.
 EXAMPLE_DATA_DIR = Path(__file__).parent.parent.parent / 'data'
@@ -31,6 +41,20 @@ EXAMPLE_DATA_PATH = (
 EXAMPLE_GOOGLE_DRIVE_ID = '1nI_hzrqbGBypUU7jMbWnF7-PkqNMiwqB'
 EXAMPLE_DATA_REF = 'https://doi.org/10.1038/s43246-022-00259-x'
 
+data_dict = {
+    "CeCoFeGd": {
+        "data_path": (
+            EXAMPLE_DATA_DIR / 'CeCoFeGd.h5'
+        ),
+        "segment_path": EXAMPLE_DATA_DIR / 'volume_labels_CeCoFeGd.npy',
+    },
+    "thigh_sarcoma": {
+        "data_path": (
+            EXAMPLE_DATA_DIR / 'thigh_sarcoma.h5'
+        ),
+        "segment_path": EXAMPLE_DATA_DIR / 'volume_labels_thigh_sarcoma.npy',
+    },
+}
 
 class App(TrameApp):
     def __init__(self, server=None):
