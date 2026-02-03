@@ -60,6 +60,9 @@ class App(TrameApp):
     def __init__(self, server=None):
         super().__init__(server, client_type='vue3')
 
+        # Add this line to hook into browser connect
+        # self.ctrl.on_client_connected.add(self._on_ready)
+
         # CLI
         self.server.cli.add_argument(
             "--data", help="Path to the file to load", default=None
@@ -90,6 +93,13 @@ class App(TrameApp):
             help="Set a path to a label map file",
             default=None,
         )
+        self.server.cli.add_argument(
+            "--use-supervoxel",
+            help="Use supervoxel segmentation",
+            dest="use_supervoxel",
+            action="store_true",
+            default=False,
+        )
 
         args, _ = self.server.cli.parse_known_args()
         self.enable_preprocessing = args.preprocess
@@ -98,6 +108,8 @@ class App(TrameApp):
         self.opacity_channel = args.opacity_channel
         self.label_map_file = args.label_map
         self.label_map = None
+
+        self.use_supervoxels = args.use_supervoxel
 
         if self.label_map_file is not None:
             # Load the label map
@@ -108,29 +120,6 @@ class App(TrameApp):
         # Set this if you want label map names other than "0, 1, 2, ..."
         self.label_map_names = None
 
-        file_to_load = args.data
-        if file_to_load is None:
-            EXAMPLE_DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-            print(
-                '\nData path was not provided using `--data`'
-                f'\nDefaulting to example: {EXAMPLE_DATA_PATH.name}'
-            )
-
-            citation_str = f'* Example data citation: {EXAMPLE_DATA_REF} *'
-            boundary_str = '*' * len(citation_str)
-            print(f'\n{boundary_str}\n{citation_str}\n{boundary_str}\n')
-
-            if not EXAMPLE_DATA_PATH.exists():
-                # Automatically download the example dataset, and put it in the
-                # data directory.
-                print(f'Downloading example dataset to: {EXAMPLE_DATA_PATH}')
-                download_file_from_google_drive(
-                    EXAMPLE_GOOGLE_DRIVE_ID, EXAMPLE_DATA_PATH
-                )
-
-            file_to_load = EXAMPLE_DATA_PATH
-
         self.volume_view = VolumeView()
 
         self.unrotated_gbc = None
@@ -140,15 +129,57 @@ class App(TrameApp):
         self.rgb_data = None
         self.opacity_data = None
 
+        # Set the default values
+        self.num_clusters = 5
+        self.cluster_method = "kmeans"
+        self.use_autoencoder = False
+        self.dataset = "thigh_sarcoma"
+
         self.ui = self._build_ui()
-        self.load_data(file_to_load)
+        self.load_data()
         self.create_table()
 
         if self.server.hot_reload:
             self.ctrl.on_server_reload.add(self._build_ui)
 
-    def load_data(self, file_to_load):
-        header, data = load_dataset(Path(file_to_load))
+    def _on_ready(self, **kwargs):
+        pass
+    
+    def load_data(self):
+        try:
+            header, data = load_dataset(Path(data_dict[self.dataset]["data_path"]))
+
+        except Exception as e:
+            print(f"Error loading dataset: {e}")
+
+            self.dataset == "CeCoFeGd"
+
+            EXAMPLE_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+            print(
+                f'\nDefaulting to example: {data_dict[self.dataset]["data_path"].name}'
+            )
+
+            citation_str = f'* Example data citation: {EXAMPLE_DATA_REF} *'
+            boundary_str = '*' * len(citation_str)
+            print(f'\n{boundary_str}\n{citation_str}\n{boundary_str}\n')
+
+            if not data_dict[self.dataset]["data_path"].exists():
+                # Automatically download the example dataset, and put it in the
+                # data directory.
+                print(f'Downloading example dataset to: {data_dict[self.dataset]["data_path"]}')
+                download_file_from_google_drive(
+                    EXAMPLE_GOOGLE_DRIVE_ID, data_dict[self.dataset]["data_path"]
+                )
+
+            header, data = load_dataset(Path(data_dict[self.dataset]["data_path"]))
+
+        if self.dataset == "thigh_sarcoma":
+            header[0], header[1] = header[1], header[0]
+            data[:, :, :, [0, 1]] = data[:, :, :, [1, 0]]
+
+        print(header)
+        print("Data shape on load ", data.shape)
 
         # Handle NaN if provided
         if self.nan_replacement is not None:
@@ -159,6 +190,7 @@ class App(TrameApp):
         # the first non-zero voxel is hit.
         # Our sample data has a *lot* of padding.
         data = _remove_padding_uniform(data)
+        print("Data shape after padding removal ", data.shape)
 
         if self.opacity_channel is not None:
             # Extract the opacity data
@@ -182,12 +214,42 @@ class App(TrameApp):
             np.prod(self.data_shape), self.num_channels
         )
 
+        print(f"Number of channels: {self.num_channels}")
+        print(f"Raw unpadded flattened data shape: {self.raw_unpadded_flattened_data.shape}")
+
         if self.normalize_channels:
             # Normalize each channel to be between 0 and 1
             for i in range(data.shape[-1]):
                 data[:, :, :, i] = _normalize_data(data[:, :, :, i])
         else:
             data = _normalize_data(data)
+
+        print("Data shape after normalization ", data.shape)
+
+        # ------------------------------------------------------------------------------------------------
+
+        if self.use_supervoxels:
+
+            print("---------------------------------------------------")
+
+            if not data_dict[self.dataset]["segment_path"].exists():
+                # Generate supervoxels
+                segments, _ = self.generate_supervoxel(data, True)
+                
+            else:
+                # Load the supervoxels
+                segments = np.load(data_dict[self.dataset]["segment_path"])
+                print("Labels loaded.")
+                print("Number of supervoxels:", len(np.unique(segments)))
+                print("Range of labels:", np.min(segments), np.max(segments))
+                print("Shape of labels:", segments.shape)
+                self.segments_info = segments
+
+            print("---------------------------------------------------")
+
+            self.handle_supervoxels(data, segments)
+
+        # ------------------------------------------------------------------------------------------------
 
         fields = None
         if self.enable_preprocessing:
@@ -213,18 +275,117 @@ class App(TrameApp):
 
         # Provide control on data arrays
         self.state.data_channels = fields
+        print("Data channels ", fields)
 
         # Store the data in a flattened form. It is easier to work with.
         flattened_data = data.reshape(
             np.prod(self.data_shape), self.num_channels
         )
+        print("Flattened data shape ", flattened_data.shape)
         self.nonzero_indices = ~np.all(np.isclose(flattened_data, 0), axis=1)
 
         # Only store nonzero data. We will reconstruct the zeros later.
         self.nonzero_data = flattened_data[self.nonzero_indices]
+        print("Nonzero data shape ", self.nonzero_data.shape)
+
+        # ------------------------------------------------------------------------------------------------
+
+        if self.use_supervoxels:
+        
+            print("---------------------------------------------------")
+
+            nonzero_final_colored_volume = self.flattened_final_colored_volume[self.nonzero_indices]
+            print("Nonzero final colored volume shape ", nonzero_final_colored_volume.shape)
+
+            self.kmeans_rgb_data = nonzero_final_colored_volume
+
+            print("---------------------------------------------------")
+
+        # ------------------------------------------------------------------------------------------------
 
         # Trigger an update of the data
         self.update_gbc()
+
+    def handle_supervoxels(self, data, segments):
+        unique_segments = np.unique(segments)
+        num_segments = unique_segments.size
+        num_channels = data.shape[-1]
+
+        # Preallocate result array
+        segment_vectors = np.zeros((num_segments, num_channels), dtype=data.dtype)
+
+        # Compute mean per channel per segment
+        for c in range(num_channels):
+            segment_vectors[:, c] = ndimage.mean(data[..., c], labels=segments, index=unique_segments)
+
+        print("Segment vector shape ", segment_vectors.shape)
+
+        print("---------------------------------------------------")
+
+        # Perform K-means clustering on the segment vectors to get an initial set of clusters
+
+        start_time = time.time()
+
+        self.clusterArray = {}
+        self.indexArray = None
+
+        for i in range(self.num_clusters):
+            self.clusterArray[str(i)] = False
+
+        self.state.cluster_array = self.clusterArray
+
+        if self.cluster_method == "kmeans":
+            # Perform K-means clustering
+            kmeans = KMeans(n_clusters=self.num_clusters, random_state=42)
+            cluster_labels = kmeans.fit_predict(segment_vectors)
+
+            print(f"K-means clustering completed in {time.time() - start_time:.2f} seconds")
+
+        print("---------------------------------------------------")
+
+        cluster_color_dict = {}
+
+        colormap = plt.cm.get_cmap("tab10")
+
+        for i in range(self.num_clusters):  # 5 clusters
+            cluster_color_dict[i] = colormap(i)
+
+        for cluster_id in np.unique(cluster_labels):
+            cluster_color_dict[cluster_id] = list(map(lambda x: x, cluster_color_dict[cluster_id][:3]))
+
+        print("Cluster Color Dictionary for K-means clusters: ", cluster_color_dict)
+
+        print("---------------------------------------------------")
+
+        final_colored_volume = np.zeros(data.shape)
+        self.final_cluster_labels = np.zeros(data.shape)
+
+        final_colored_volume = final_colored_volume[:, :, :, :3]
+        self.final_cluster_labels = self.final_cluster_labels[:, :, :, 0]
+
+        segment_ids = segments  
+        cluster_ids = cluster_labels[segment_ids]
+
+        # Assign final cluster labels
+        self.final_cluster_labels = cluster_ids
+
+        max_cluster_id = max(cluster_color_dict.keys())
+        color_array = np.zeros((max_cluster_id + 1, 3), dtype=np.float32) 
+
+        for cid, color in cluster_color_dict.items():
+            color_array[cid] = color 
+
+        final_colored_volume[:] = color_array[cluster_ids]
+
+        print("Final colored volume shape ", final_colored_volume.shape)
+
+        print("Final cluster labels shape ", self.final_cluster_labels.shape)
+
+        self.flattened_final_colored_volume = final_colored_volume.reshape(np.prod(self.data_shape), 3)
+
+        print("Flattened final colored volume shape ", self.flattened_final_colored_volume.shape)
+
+        print("---------------------------------------------------")
 
     def create_table(self):
         if self.label_map is None:
@@ -306,6 +467,11 @@ class App(TrameApp):
     def update_gbc(self):
         gbc, components = compute_gbc(self.nonzero_data)
 
+        print("Nonzero data shape ", self.nonzero_data.shape)
+        print("GBC shape ", gbc.shape)
+        print("Components shape ", components.shape)
+        print("-----------------------------------------------------------------")
+
         self.unrotated_gbc = gbc
         self.state.unrotated_component_coords = components.tolist()
 
@@ -323,6 +489,9 @@ class App(TrameApp):
         num_samples = self.state.w_sample_size
         num_bins = self.state.w_bins
 
+        print("Number of samples ", num_samples)
+        print("Number of bins ", num_bins)
+
         # Perform random sampling
         sample_idx = np.random.choice(
             len(self.unrotated_gbc), size=num_samples
@@ -330,6 +499,10 @@ class App(TrameApp):
         data = self.unrotated_gbc[sample_idx]
         unrotated_bin_data = data_topology_reduction(data, num_bins)
         self.state.unrotated_bin_data = unrotated_bin_data.tolist()
+
+        print("Data shape before sampling", self.unrotated_gbc.shape)
+        print("Data shape after sampling", unrotated_bin_data.shape)
+        print("-------------------------------------------------------------")
 
     @change('w_rotation')
     def update_voxel_colors(self, **kwargs):
@@ -351,9 +524,25 @@ class App(TrameApp):
 
         rgb = self.rgb_data
 
+        print("RGB Data shape", self.rgb_data.T.shape)
+        if self.use_supervoxels:
+            print("Original Kmeans RGB Data shape", self.kmeans_rgb_data.shape)
+            if self.rgb_data.T.shape != self.kmeans_rgb_data.shape:
+                print("Kmeans RGB Data shape", self.filtered_kmeans_rgb_data.shape)
+            else:
+                print("Kmeans RGB Data shape", self.kmeans_rgb_data.shape)
+
+        print("-------------------------------------------------------------")
+
         # Reconstruct full data with rgba values
         full_data = np.zeros((np.prod(self.data_shape), 4))
-        full_data[self.nonzero_indices, :3] = rgb.T
+        if self.use_supervoxels:
+            if self.rgb_data.T.shape != self.kmeans_rgb_data.shape:
+                full_data[self.nonzero_indices, :3] = self.filtered_kmeans_rgb_data
+            else:
+                full_data[self.nonzero_indices, :3] = self.kmeans_rgb_data
+        else:
+            full_data[self.nonzero_indices, :3] = rgb.T
 
         if self.opacity_data is None:
             # Make nonzero voxels have an alpha of the mean of the channels.
@@ -385,12 +574,39 @@ class App(TrameApp):
         'w_clip_x',
         'w_clip_y',
         'w_clip_z',
+        'cluster_array',
+        'selected_supervoxels'
     )
     def update_mask_data(self, **kwargs):
         if any(x is None for x in (self.rgb_data, self.gbc_data)):
             return
 
-        alpha = self.compute_alpha()
+        if 'filter-cluster' in self.state.show_groups:
+            # Get value of cluster_array from arguments
+            new_cluster_array = kwargs.get('cluster_array', None)
+            clusterChanged = False
+            if new_cluster_array is not None and (self.clusterArray != new_cluster_array):
+                clusterChanged = True
+                self.clusterArray = new_cluster_array
+
+        else:
+            clusterChanged = False
+
+            # Check if cluster_array is initialized before accessing it
+            if hasattr(self.state, 'cluster_array') and self.state.cluster_array is not None:
+                for i in range(self.num_clusters):
+                    if self.state.cluster_array.get(str(i), False):
+                        clusterChanged = True
+                        break
+                
+                if clusterChanged:
+                    # Set all values of clusterArray to False
+                    for i in range(self.num_clusters):
+                        self.clusterArray[str(i)] = False
+
+                    self.state.cluster_array = self.clusterArray # UI not updating
+
+        alpha = self.compute_alpha(clusterChanged)
         mask_ref = self.volume_view.mask_reference
         mask_ref[self.nonzero_indices] = alpha
         self.volume_view.mask_data.Modified()
@@ -492,6 +708,9 @@ class App(TrameApp):
         # Only store nonzero data. We will reconstruct the zeros later.
         self.nonzero_data = flattened_data[self.nonzero_indices]
 
+        if self.use_supervoxels:
+            self.filtered_kmeans_rgb_data = self.flattened_final_colored_volume[self.nonzero_indices]
+
         # Trigger an update of the data
         self.update_gbc()
 
@@ -507,6 +726,93 @@ class App(TrameApp):
         else:
             self.volume_view.renderer.SetBackground(0, 0, 0)
         self.ctrl.view_update()
+
+    @change("slice_axis")
+    def update_max_slice_index(self, slice_axis, **kwargs):
+        if slice_axis == "x":
+            self.state.max_slice_index = self.data_shape[0] - 1
+        elif slice_axis == "y":
+            self.state.max_slice_index = self.data_shape[1] - 1
+        else:
+            self.state.max_slice_index = self.data_shape[2] - 1
+
+        self.state.slice_index = 0  # reset index on axis change if needed
+
+    @change("slice_index")
+    @change("show_groups")
+    def update_slice(self, slice_index, **kwargs):
+        if 'visualize-slice' not in self.state.show_groups:
+            self.state.w_clip_x = [0, 1]
+            self.state.w_clip_y = [0, 1]
+            self.state.w_clip_z = [0, 1]
+            if hasattr(self, '_initial_update_slice_call'):
+                del self._initial_update_slice_call
+
+        else:
+            first_call = not hasattr(self, '_initial_update_slice_call')
+
+            if first_call:
+                self._initial_update_slice_call = True
+                return
+
+            fractional_slice_index = slice_index / self.state.max_slice_index
+
+            if self.state.slice_axis == "x":
+                self.state.w_clip_x = [fractional_slice_index, fractional_slice_index + 0.01]
+                self.state.w_clip_y = [0, 1]
+                self.state.w_clip_z = [0, 1]
+            elif self.state.slice_axis == "y":
+                self.state.w_clip_y = [fractional_slice_index, fractional_slice_index + 0.01]
+                self.state.w_clip_x = [0, 1]
+                self.state.w_clip_z = [0, 1]
+            else:
+                self.state.w_clip_z = [fractional_slice_index, fractional_slice_index + 0.01]
+                self.state.w_clip_x = [0, 1]
+                self.state.w_clip_y = [0, 1]
+
+    @change("cluster_method")
+    @change("cluster_count")
+    @change("use_autoencoder")
+    @change("normalize_channels")
+    @change("dataset")
+    def update_cluster_data(self, **kwargs):
+        # Get values from arguments
+        cluster_method = kwargs.get('cluster_method', None)
+        cluster_count = kwargs.get('cluster_count', None)
+        use_autoencoder = kwargs.get('use_autoencoder', None)
+        normalize_channels = kwargs.get('normalize_channels', None)
+        dataset = kwargs.get('dataset', None)
+
+        print("Cluster method ", cluster_method)
+        print("Cluster count ", cluster_count)
+        print("Use autoencoder ", use_autoencoder)
+        print("Normalize channels ", normalize_channels)
+        print("Dataset ", dataset)
+
+        print("-------------------------------------------------------------")
+
+        if cluster_count is not None:
+            self.num_clusters = int(cluster_count)
+        if cluster_method is not None:
+            self.cluster_method = cluster_method
+        if use_autoencoder is not None:
+            self.use_autoencoder = use_autoencoder
+        if normalize_channels is not None:
+            self.normalize_channels = normalize_channels
+        if dataset is not None:
+            self.dataset = dataset
+
+        if dataset is not None:
+            # self.ui = self._build_ui()
+            self.load_data()
+
+    @property
+    def state(self):
+        return self.server.state
+
+    @property
+    def ctrl(self):
+        return self.server.controller
 
     @property
     def render_window(self):
@@ -535,7 +841,7 @@ class App(TrameApp):
             self.state.w_clip_z,
         ]
 
-    def compute_alpha(self):
+    def compute_alpha(self, clusterChanged):
         gbc_data = self.gbc_data
         if gbc_data is None:
             # Can't do anything
@@ -549,6 +855,49 @@ class App(TrameApp):
             slices.append(np.s_[min_idx:max_idx])
 
         clip_mask[slices[0], slices[1], slices[2]] = True
+
+        # ------------------------------------------------------------------------------------------------
+
+        if self.use_supervoxels:
+            if not clusterChanged and self.indexArray is not None:
+                # If the cluster array is not changed, we can use the indexArray to find indexes we have to set as 0 in clip_mask
+                clip_mask[self.indexArray] = 0
+            else:
+                print("--------------------------------------------------")
+                # Filter out only selected clusters
+                cluster_array = self.state.cluster_array
+
+                selected_clusters = [i for i, v in cluster_array.items() if v]
+
+                print("Selected clusters ", selected_clusters)
+                print("Selected supervoxels ", self.state.selected_supervoxels)
+
+                cluster_mask = np.zeros(self.data_shape, dtype=bool)
+                supervoxel_mask = np.zeros(self.data_shape, dtype=bool)
+                self.indexArray = np.zeros(self.data_shape, dtype=bool)
+                
+                if len(selected_clusters) > 0:
+                    # Convert selected_clusters and selected_supervoxels to sets of ints
+                    selected_cluster_ids = set(map(int, selected_clusters))
+
+                    # Create mask for cluster condition
+                    cluster_ids = self.final_cluster_labels.astype(int)
+                    cluster_mask = ~np.isin(cluster_ids, list(selected_cluster_ids))
+
+                if self.state.selected_supervoxels is not None:
+                    selected_supervoxels = np.array(self.state.selected_supervoxels, dtype=self.segments_info.dtype)
+
+                    # Create mask for supervoxel mismatch
+                    supervoxel_mask = ~np.isin(self.segments_info, selected_supervoxels)
+
+                # Combine masks: True where either condition is met
+                combined_mask = cluster_mask | supervoxel_mask
+
+                # Apply the mask
+                clip_mask[combined_mask] = 0
+                self.indexArray[combined_mask] = True
+
+        # ------------------------------------------------------------------------------------------------
 
         # Reshape into the flat form and remove any zero index data
         clip_flattened = clip_mask.reshape(np.prod(self.data_shape))
@@ -579,11 +928,74 @@ class App(TrameApp):
         server = self.server
         ctrl = self.ctrl
 
+        @ctrl.set("get_search")
+        def get_search(search):
+            print("******************************************************************")
+            print("******************************************************************")
+            print("Page Load Happened!!")
+            print("******************************************************************")
+            print("******************************************************************")
+            # Reset parameters on load
+            self.indexArray = None
+            self.num_clusters = 5
+            self.cluster_method = "kmeans"
+            self.use_autoencoder = False
+            self.normalize_channels = False
+
+            if self.use_supervoxels:
+                for i in range(self.num_clusters):
+                    self.clusterArray[str(i)] = False
+                self.state.cluster_array = self.clusterArray
+
+            for key in self.state.data_channels.keys():
+                array = self.arrays_raw[key]
+                min_val = np.nanmin(array)
+                max_val = np.nanmax(array)
+                self.state.data_channels[key]['focus_range'] = [min_val, max_val]
+
+            self.state.selected_supervoxels = None
+            self.state.dataset = "CeCoFeGd"
+            self.state.normalize_channels = False
+            self.state.dirty("cluster_array")
+            # ----------------------------------------------------
+            if not search or search == "?":
+                print("No search params")
+                self.state.selected_supervoxels = None
+                return
+            # -----------------------------------------------------
+            print(search)
+            query_params = search[1:].split("&")
+
+            for param in query_params:
+                key, value = param.split("=")
+                if key == "cluster_method":
+                    print("1")
+                    self.state.cluster_method = value
+                elif key == "cluster_count":
+                    print("2")
+                    self.state.cluster_count = int(value)
+                elif key == "use_autoencoder":
+                    print("3")
+                    self.state.use_autoencoder = value
+                elif key == "selected_supervoxel":
+                    print("4")
+                    # Parase coomma separeted values and put them in a list
+                    value_list = list(map(int, value.split("%2C")))
+                    self.state.selected_supervoxels = value_list
+                elif key == "normalize_channels":
+                    print("5")
+                    self.state.normalize_channels = value
+                elif key == "dataset":
+                    print("6")
+                    self.state.dataset = value
+
         self.state.trame__title = "MultivariateView"
         self.state.trame__favicon = ASSETS.favicon
 
         with VAppLayout(server, full_height=True) as layout:
             client.Style('html { overflow-y: hidden; }')
+
+            # client.ClientTriggers(mounted=(ctrl.get_search, "[window.location.search]"))
 
             with vtk.VtkRemoteView(
                 self.render_window, interactive_ratio=1
@@ -654,6 +1066,14 @@ class App(TrameApp):
                                 icon="mdi-table",
                                 value="table",
                             )
+                            v.VBtn(
+                                icon="mdi-scatter-plot", 
+                                value="filter-cluster"
+                            )
+                            v.VBtn(
+                                icon="mdi-video-2d", 
+                                value="visualize-slice"
+                            )
 
                         v.VSpacer()
 
@@ -674,6 +1094,7 @@ class App(TrameApp):
 
                     # Main widget
                     radvolviz.NdColorMap(
+                        brush_mode=1 if self.use_supervoxels else 0,
                         v_show="show_control_panel",
                         component_labels=('component_labels', []),
                         unrotated_bin_data=('unrotated_bin_data', []),
@@ -681,7 +1102,7 @@ class App(TrameApp):
                             'unrotated_component_coords',
                             [],
                         ),
-                        size=600,
+                        size=400,
                         rotation=('w_rotation', 0),
                         sample_size=('w_sample_size', 1100),
                         number_of_bins=('w_bins', 6),
@@ -690,6 +1111,8 @@ class App(TrameApp):
                         lens='lens_center = $event',
                         # style="position: sticky; top: 3rem; z-index: 1; background: white;",
                     )
+
+                    # -------------------------------------------------------------------------------------
 
                     # Lense control
                     with v.VCard(
@@ -717,6 +1140,8 @@ class App(TrameApp):
                             classes="ml-2",
                         )
 
+                    # -------------------------------------------------------------------------------------
+
                     # Color / Rotation management
                     with v.VCard(
                         flat=True,
@@ -732,6 +1157,8 @@ class App(TrameApp):
                             prepend_icon="mdi-rotate-360",
                             messages="Rotate color wheel",
                         )
+
+                    # -------------------------------------------------------------------------------------
 
                     # Rendering settings
                     with v.VCard(
@@ -750,6 +1177,8 @@ class App(TrameApp):
                                 v_model=('w_rendering_bg', False),
                                 density='compact',
                             )
+
+                    # -------------------------------------------------------------------------------------
 
                     # Data sampling
                     with v.VCard(
@@ -775,6 +1204,8 @@ class App(TrameApp):
                             prepend_icon="mdi-chart-scatter-plot-hexbin",
                             messages="Number of bins for the sampling algorithm",
                         )
+
+                    # -------------------------------------------------------------------------------------
 
                     # Cropping
                     with v.VCard(
@@ -811,6 +1242,8 @@ class App(TrameApp):
                             density='compact',
                             hide_details=True,
                         )
+
+                    # -------------------------------------------------------------------------------------
 
                     # Data tuning
                     with v.VCard(
@@ -973,9 +1406,114 @@ class App(TrameApp):
                                 hide_default_footer=True,
                             )
 
+                    # -------------------------------------------------------------------------------------
+
+                    # Filter clusters
+                    with v.VCard(
+                        flat=True,
+                        v_show="show_control_panel && show_groups.includes('filter-cluster')",
+                        classes="py-1",
+                    ):
+                        v.VLabel("Choose the Clusters to visualize", classes="text-body-2 ml-1")
+                        v.VDivider(classes="mr-n4")
+                        
+                        with v.VRow(
+                            v_for=("data, name in cluster_array"),
+                            key="name",
+                            classes="mx-0 my-1",
+                        ):
+                            v.VSwitch(
+                                v_model=("cluster_array[name]", False),
+                                label=("`Cluster ${name}`", None),
+                                density="compact",
+                                hide_details=True,
+                                inset=True,
+                                color="green",
+                                classes="ml-2",
+                                update_modelValue="cluster_array[name] = $event; array_modified=name; flushState('cluster_array')"
+                            )
+
+                    # -----------------------------------------------------------------------------------------
+
+                    # Visualize slice
+                    with v.VCard(
+                        flat=True,
+                        v_show="show_control_panel && show_groups.includes('visualize-slice')",
+                        classes="py-1",
+                    ):
+                        v.VLabel("Visualize a slice", classes="text-body-2 ml-1")
+                        v.VDivider(classes="mr-n4")
+
+                        # Axis selection (x, y, z)
+                        with v.VRow(classes="mx-0 my-1"):
+                            with v.VRadioGroup(
+                                v_model=("slice_axis", "x"),  # default value
+                                row=True,
+                                classes="ml-2",
+                            ):
+                                v.VRadio(label="X", value="x")
+                                v.VRadio(label="Y", value="y")
+                                v.VRadio(label="Z", value="z")
+
+                        v.VDivider(classes="mr-n4")
+
+                        with v.VRow(classes="mx-0 my-1", align="center"):
+                            # Current slice label
+                            v.VLabel("Slice Index:", classes="mr-2")
+                            v.VLabel("{{ slice_index }}", classes="font-weight-bold")
+
+                        v.VSlider(
+                            v_model=("slice_index", 0),
+                            min=("min_slice_index", 0),
+                            max=("max_slice_index", 100),  # Dynamically updated based on axis
+                            step=1,
+                            hide_details=True,
+                            class_="mx-2",
+                            prepend_icon="mdi-magnify",
+                        )
+
+                        # Min and Max labels
+                        with v.VRow(classes="mx-2", justify="space-between", style="margin-top: 10px;"):
+                            v.VLabel("Min: {{ min_slice_index }}")
+                            v.VLabel("Max: {{ max_slice_index }}")
+                        
+                        with v.VRow(classes="mx-0 my-1", align="center", style="margin-top: 10px;"):
+                            # External site button
+                            v.VBtn(
+                                "Visualize in 2D",
+                                color="primary",
+                                class_="mx-2 mt-2",
+                                style="margin-top: 20px !important; margin-left: 30% !important;",
+                                click="window.open(`http://127.0.0.1:8050?axis=${slice_axis}&index=${slice_index}&data=${data_path}`, '_blank')"
+                            )
+                
             # print(layout)
             return layout
 
+    # Function to generate supervoxels
+    def generate_supervoxel(self, data, save_data=False):
+        print("Starting SLIC segmentation...")
+
+        start_time = time.time()
+
+        # Call the custom SLIC function
+        num_supervoxels = 500
+        labels, cluster_centers = custom_slic(data, num_supervoxels)
+
+        print("SLIC segmentation complete.")
+        print("Supervoxel generation time:", time.time() - start_time)
+
+        print("Number of supervoxels:", len(cluster_centers))
+        print("Range of labels:", np.min(labels), np.max(labels))
+        print("Shape of labels:", labels.shape)
+
+        # Save the labels
+        if save_data:
+            np.save(data_dict[self.dataset]["segment_path"], labels)
+
+            print("Labels saved.")
+
+        return labels, cluster_centers
 
 @numba.njit(cache=True, nogil=True)
 def _compute_alpha(center, radius, gbc_data):
@@ -1022,3 +1560,123 @@ def _bar_plot(key_values):
     return go.Figure(
         data=go.Bar(x=list(key_values.keys()), y=list(key_values.values()))
     ).update_layout(yaxis_title="%", margin=dict(l=10, r=10, t=25, b=10))
+
+# -------------------------------------------------------------------------------
+
+def initialize_cluster_centers(data, num_superpixels, grid_spacing):
+    """
+    Initialize cluster centers based on a uniform 3D grid, ignoring zero-value voxels.
+    """
+    depth, rows, cols, _ = data.shape
+    centers = []
+    for d in range(grid_spacing // 2, depth, grid_spacing):
+        for r in range(grid_spacing // 2, rows, grid_spacing):
+            for c in range(grid_spacing // 2, cols, grid_spacing):
+                if not np.all(data[d, r, c] == 0):  # Ignore zero-value voxels
+                    centers.append([d, r, c] + list(data[d, r, c]))
+    return np.array(centers, dtype=np.float32)
+
+@numba.njit
+def calculate_distance(voxel, center, spatial_weight, feature_weight):
+    """
+    Compute the combined distance between a voxel and a cluster center in 3D.
+    """
+    spatial_dist = np.sqrt((voxel[0] - center[0])**2 + (voxel[1] - center[1])**2 + (voxel[2] - center[2])**2)
+    feature_dist = np.sqrt(np.sum((voxel[3:] - center[3:])**2))
+    return np.sqrt((spatial_dist / spatial_weight)**2 + (feature_dist / feature_weight)**2)
+
+@numba.njit
+def assign_voxels_to_clusters(data, cluster_centers, labels, distances, spatial_weight, feature_weight, grid_spacing):
+    """
+    Assign each voxel to the nearest cluster center within its search window, ignoring zero-value voxels.
+    """
+    depth, rows, cols, _ = data.shape
+    for idx, center in enumerate(cluster_centers):
+        d, r, c = int(center[0]), int(center[1]), int(center[2])
+        
+        # Search window around the cluster center
+        d_min = max(d - grid_spacing, 0)
+        d_max = min(d + grid_spacing + 1, depth)
+        r_min = max(r - grid_spacing, 0)
+        r_max = min(r + grid_spacing + 1, rows)
+        c_min = max(c - grid_spacing, 0)
+        c_max = min(c + grid_spacing + 1, cols)
+
+        for dd in range(d_min, d_max):
+            for rr in range(r_min, r_max):
+                for cc in range(c_min, c_max):
+                    if np.all(data[dd, rr, cc] == 0):
+                        continue  # Ignore zero-value voxels
+                    
+                    voxel = np.array([dd, rr, cc] + list(data[dd, rr, cc]))
+                    distance = calculate_distance(voxel, center, spatial_weight, feature_weight)
+                    if distance < distances[dd, rr, cc]:
+                        distances[dd, rr, cc] = distance
+                        labels[dd, rr, cc] = idx
+
+@numba.njit
+def update_cluster_centers(data, labels, cluster_centers):
+    """
+    Compute new cluster centers based on the average of assigned voxels.
+    """
+    num_clusters = len(cluster_centers)
+    num_features = data.shape[3]
+    
+    new_centers = np.zeros_like(cluster_centers)
+    counts = np.zeros(num_clusters, dtype=np.int32)
+
+    depth, rows, cols = labels.shape
+    for d in range(depth):
+        for r in range(rows):
+            for c in range(cols):
+                label = labels[d, r, c]
+                if label == -1:
+                    continue  # Skip unassigned voxels
+                new_centers[label][:3] += np.array([d, r, c], dtype=np.float32)
+                new_centers[label][3:] += data[d, r, c]
+                counts[label] += 1
+
+    for i in range(num_clusters):
+        if counts[i] > 0:
+            new_centers[i] /= counts[i]
+
+    return new_centers
+
+def custom_slic(data, num_superpixels, spatial_weight=5, max_iter=20):
+    """
+    Perform optimized SLIC segmentation on 4D volumetric data,
+    ensuring zero-value voxels are ignored in segmentation and grouped into a single supervoxel at the end.
+    """
+    depth, rows, cols, num_features = data.shape
+    grid_spacing = int(np.cbrt((depth * rows * cols) / num_superpixels))
+    feature_weight = np.std(data.reshape(-1, num_features), axis=0).mean()
+
+    # Initialize cluster centers
+    cluster_centers = initialize_cluster_centers(data, num_superpixels, grid_spacing)
+    labels = -1 * np.ones((depth, rows, cols), dtype=np.int32)
+    distances = np.full((depth, rows, cols), np.inf, dtype=np.float32)
+
+    # Iterate until convergence
+    for _ in range(max_iter):
+        assign_voxels_to_clusters(data, cluster_centers, labels, distances, spatial_weight, feature_weight, grid_spacing)
+        cluster_centers = update_cluster_centers(data, labels, cluster_centers)
+    
+    # Assign all zero-value voxels to a single supervoxel label
+    zero_voxel_label = (np.max(labels) + 1)
+    for d in range(depth):
+        for r in range(rows):
+            for c in range(cols):
+                if np.all(np.abs(data[d, r, c]) < 1e-15):
+                    labels[d, r, c] = zero_voxel_label
+
+    # Ensure all voxels are assigned to a cluster
+    unassigned = np.where(labels == -1)
+    if unassigned[0].size > 0:
+        tree = cKDTree(cluster_centers[:, :3])
+        points = np.column_stack(unassigned)
+        _, nearest_labels = tree.query(points)
+        labels[unassigned] = nearest_labels
+
+    return labels, cluster_centers
+
+# -------------------------------------------------------------------------------
