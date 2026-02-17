@@ -120,6 +120,10 @@ class App(TrameApp):
         # Set this if you want label map names other than "0, 1, 2, ..."
         self.label_map_names = None
 
+        if args.data not in data_dict:
+            print(f"Unknown dataset: {args.data}, switching to default dataset: CeCoFeGd")
+        self.dataset = args.data if args.data is not None else "CeCoFeGd"
+
         self.volume_view = VolumeView()
 
         self.unrotated_gbc = None
@@ -133,7 +137,7 @@ class App(TrameApp):
         self.num_clusters = 5
         self.cluster_method = "kmeans"
         self.use_autoencoder = False
-        self.dataset = "thigh_sarcoma"
+        # self.dataset = "CeCoFeGd"
 
         self.ui = self._build_ui()
         self.load_data()
