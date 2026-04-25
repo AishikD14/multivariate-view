@@ -26,6 +26,7 @@ class NdColorMap(HtmlElement):
             ("sample_size", "sampleSize"),
             ("show_lens", "showLens"),
             ("unrotated_bin_data", "unrotatedBinData"),
+            ("unrotated_bin_colors", "unrotatedBinColors"),
             ("unrotated_component_coords", "unrotatedComponentCoords"),
         ]
         self._event_names += [

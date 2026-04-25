@@ -48,6 +48,10 @@ export default {
     unrotatedBinData: {
       type: Array,
     },
+    unrotatedBinColors: {
+      type: Array,
+      default: () => [],
+    },
   },
   setup(props, { emit }) {
     const container = ref(null);
@@ -123,6 +127,10 @@ export default {
       }
     );
 
+    function pointColor(i) {
+      return props.unrotatedBinColors?.[i] || "#fff";
+    }
+
     const { componentLabels, lensRadius, showLens, size } = toRefs(props);
     return {
       bgImage,
@@ -133,6 +141,7 @@ export default {
       lensRadius,
       lensRadiusDisplayUnits,
       onMousePress,
+      pointColor,
       scaleGBC,
       showLens,
       size,
@@ -143,12 +152,13 @@ export default {
           <svg :width="size" :height="size">
             <image :href="bgImage" x="0" y="0" :width="size" :height="size" />
 
-            <g fill="#fff" stroke="black" stroke-opacity="0.5">
+            <g stroke="black" stroke-opacity="0.5">
               <circle
                 :key="'scatter-' + i"
                 v-for="d, i in dataToDraw.data"
                 :cx="scaleGBC(d[0])"
                 :cy="scaleGBC(d[1])"
+                :fill="pointColor(i)"
                 r="2.5"
               />
             </g>

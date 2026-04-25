@@ -145,6 +145,7 @@ class App:
         self.opacity_data = None
         self.parallel_coordinates_constraints = {}
         self.parallel_coordinates_figure = None
+        self.volume_window_center = (0.0, 0.18)
 
         # Set the default values
         self.num_clusters = 5
@@ -315,6 +316,9 @@ class App:
             print("Nonzero final colored volume shape ", nonzero_final_colored_volume.shape)
 
             self.kmeans_rgb_data = nonzero_final_colored_volume
+            self.nonzero_cluster_labels = self.final_cluster_labels.reshape(
+                np.prod(self.data_shape)
+            )[self.nonzero_indices].astype(int)
 
             print("---------------------------------------------------")
 
@@ -761,12 +765,69 @@ class App:
             len(self.unrotated_gbc), size=num_samples
         )
         data = self.unrotated_gbc[sample_idx]
-        unrotated_bin_data = data_topology_reduction(data, num_bins)
+
+        if self.use_supervoxels and hasattr(self, "nonzero_cluster_labels"):
+            colors = [
+                self.rgb_to_plotly_color(self.cluster_color_dict[cluster_id])
+                for cluster_id in self.nonzero_cluster_labels[sample_idx]
+            ]
+            unrotated_bin_data, unrotated_bin_colors = (
+                self.data_topology_reduction_with_colors(
+                    data, colors, num_bins
+                )
+            )
+        else:
+            unrotated_bin_data = data_topology_reduction(data, num_bins)
+            unrotated_bin_colors = ["#fff"] * len(unrotated_bin_data)
+
         self.state.unrotated_bin_data = unrotated_bin_data.tolist()
+        self.state.unrotated_bin_colors = unrotated_bin_colors
 
         print("Data shape before sampling", self.unrotated_gbc.shape)
         print("Data shape after sampling", unrotated_bin_data.shape)
         print("-------------------------------------------------------------")
+
+    def data_topology_reduction_with_colors(self, data, colors, num_bins):
+        bins = []
+        bin_map = {}
+        for i in range(num_bins):
+            bin_map[i] = {}
+            for j in range(num_bins):
+                bin_map[i][j] = []
+                bins.append(bin_map[i][j])
+
+        delta = 2 / num_bins
+        c_min = 0
+        c_max = num_bins - 1
+        for entry, color in zip(data, colors):
+            i, j = np.clip(np.floor((entry + 1) / delta), c_min, c_max)
+            bin_map[i][j].append((entry, color))
+
+        reduced_data = []
+        reduced_colors = []
+        for entries in bins:
+            num_entries = len(entries)
+            if num_entries == 0:
+                continue
+
+            sample_idx = set()
+            target_size = num_entries / 2
+            if target_size > 1000:
+                target_size = 5 * np.log2(num_entries)
+            elif target_size > 100:
+                target_size = np.log2(num_entries)
+
+            while len(sample_idx) < target_size:
+                rd = int(np.floor(np.random.rand() * num_entries))
+                if rd in sample_idx:
+                    continue
+
+                sample_idx.add(rd)
+                point, color = entries[rd]
+                reduced_data.append(point)
+                reduced_colors.append(color)
+
+        return np.asarray(reduced_data), reduced_colors
 
     @change('w_rotation')
     def update_voxel_colors(self, **kwargs):
@@ -982,6 +1043,9 @@ class App:
 
         if self.use_supervoxels:
             self.filtered_kmeans_rgb_data = self.flattened_final_colored_volume[self.nonzero_indices]
+            self.nonzero_cluster_labels = self.final_cluster_labels.reshape(
+                np.prod(self.data_shape)
+            )[self.nonzero_indices].astype(int)
             if self.enable_parallel_coordinates:
                 unique_segments = np.asarray(
                     self.supervoxel_ids, dtype=self.segments_info.dtype
@@ -1095,6 +1159,7 @@ class App:
         camera.SetPosition(*position)
         camera.SetViewUp(*view_up_by_axis[vtk_axis])
         camera.OrthogonalizeViewUp()
+        self.apply_volume_screen_offset()
 
         self.volume_view.renderer.ResetCameraClippingRange()
         self.ctrl.view_update()
@@ -1159,8 +1224,17 @@ class App:
 
     @life_cycle.server_ready
     def initial_reset_camera(self, **kwargs):
+        self.reset_camera()
+
+    def reset_camera(self):
         self.volume_view.renderer.ResetCameraClippingRange()
         self.volume_view.renderer.ResetCamera()
+        self.apply_volume_screen_offset()
+        self.ctrl.view_update()
+
+    def apply_volume_screen_offset(self):
+        camera = self.volume_view.renderer.GetActiveCamera()
+        camera.SetWindowCenter(*self.volume_window_center)
 
     @property
     def clip_ranges(self):
@@ -1367,9 +1441,16 @@ class App:
             client.ClientTriggers(mounted=(ctrl.get_search, "[window.location.search]"))
 
             with vtk.VtkRemoteView(
-                self.render_window, interactive_ratio=1
+                self.render_window,
+                interactive_ratio=1,
+                style=(
+                    "`position: absolute; top: 0; left: 0; right: 0; "
+                    "bottom: ${has_parallel_coordinates && "
+                    "show_groups.includes('parallel-coordinates') ? "
+                    "parallel_coordinates_height + 36 : 0}px;`",
+                ),
             ) as html_view:
-                ctrl.reset_camera = html_view.reset_camera
+                ctrl.reset_camera = self.reset_camera
                 ctrl.view_update = html_view.update
 
                 with v.VCard(
@@ -1452,6 +1533,7 @@ class App:
                             'unrotated_component_coords',
                             [],
                         ),
+                        unrotated_bin_colors=('unrotated_bin_colors', []),
                         size=400,
                         rotation=('w_rotation', 0),
                         sample_size=('w_sample_size', 1100),
@@ -1843,7 +1925,7 @@ class App:
                     v_show="show_groups.includes('parallel-coordinates')",
                     classes="pb-1 px-2",
                     style=(
-                        "z-index: 2; position: absolute; left: 0.5rem; "
+                        "z-index: 2; position: fixed; left: 0.5rem; "
                         "right: 0.5rem; bottom: 0.5rem;"
                     ),
                 ):
@@ -1872,19 +1954,6 @@ class App:
                             "window.addEventListener('mouseup', onUp);"
                         ),
                     )
-                    with v.VToolbar(density="compact", flat=True):
-                        v.VSpacer()
-                        v.VLabel(
-                            "{{ parallel_coordinates_selection_count ? parallel_coordinates_selection_count + ' selected' : 'No brush' }}",
-                            classes="text-caption mr-2",
-                        )
-                        v.VBtn(
-                            icon="mdi-filter-remove-outline",
-                            density="compact",
-                            variant="text",
-                            click=ctrl.clear_parallel_coordinates_selection,
-                        )
-                    v.VDivider()
                     with html.Div(
                         style=(
                             "`width: 100%; height: "
