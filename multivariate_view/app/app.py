@@ -97,6 +97,16 @@ class App:
             action="store_true",
             default=False,
         )
+        self.server.cli.add_argument(
+            "--parallel-coordinates",
+            help=(
+                "Show a brushed parallel coordinates plot with one line per "
+                "supervoxel"
+            ),
+            dest="parallel_coordinates",
+            action="store_true",
+            default=True,
+        )
 
         args, _ = self.server.cli.parse_known_args()
         self.enable_preprocessing = args.preprocess
@@ -105,7 +115,16 @@ class App:
         self.opacity_channel = args.opacity_channel
         self.label_map_file = args.label_map
         self.label_map = None
-        self.use_supervoxels = args.use_supervoxel
+        self.enable_parallel_coordinates = args.parallel_coordinates
+        self.use_supervoxels = (
+            args.use_supervoxel or self.enable_parallel_coordinates
+        )
+
+        if self.enable_parallel_coordinates and not args.use_supervoxel:
+            print(
+                "Parallel coordinates require supervoxels; enabling "
+                "supervoxel segmentation."
+            )
 
         if self.label_map_file is not None:
             # Load the label map
@@ -124,6 +143,8 @@ class App:
         self.gbc_data = None
         self.rgb_data = None
         self.opacity_data = None
+        self.parallel_coordinates_constraints = {}
+        self.parallel_coordinates_figure = None
 
         # Set the default values
         self.num_clusters = 5
@@ -303,16 +324,12 @@ class App:
         self.update_gbc()
 
     def handle_supervoxels(self, data, segments):
+        self.segments_info = segments
         unique_segments = np.unique(segments)
-        num_segments = unique_segments.size
-        num_channels = data.shape[-1]
 
-        # Preallocate result array
-        segment_vectors = np.zeros((num_segments, num_channels), dtype=data.dtype)
-
-        # Compute mean per channel per segment
-        for c in range(num_channels):
-            segment_vectors[:, c] = ndimage.mean(data[..., c], labels=segments, index=unique_segments)
+        segment_vectors = self.compute_supervoxel_vectors(
+            data, segments, unique_segments
+        )
 
         print("Segment vector shape ", segment_vectors.shape)
 
@@ -353,14 +370,23 @@ class App:
 
         print("---------------------------------------------------")
 
+        self.supervoxel_ids = unique_segments.astype(int).tolist()
+        self.supervoxel_vectors = segment_vectors.astype(float)
+        self.supervoxel_cluster_labels = cluster_labels.astype(int)
+        self.cluster_color_dict = cluster_color_dict
+
         final_colored_volume = np.zeros(data.shape)
         self.final_cluster_labels = np.zeros(data.shape)
 
         final_colored_volume = final_colored_volume[:, :, :, :3]
         self.final_cluster_labels = self.final_cluster_labels[:, :, :, 0]
 
-        segment_ids = segments  
-        cluster_ids = cluster_labels[segment_ids]
+        sort_idx = np.argsort(unique_segments)
+        sorted_segments = unique_segments[sort_idx]
+        sorted_cluster_labels = cluster_labels[sort_idx]
+        cluster_ids = sorted_cluster_labels[
+            np.searchsorted(sorted_segments, segments)
+        ]
 
         # Assign final cluster labels
         self.final_cluster_labels = cluster_ids
@@ -382,6 +408,248 @@ class App:
         print("Flattened final colored volume shape ", self.flattened_final_colored_volume.shape)
 
         print("---------------------------------------------------")
+
+        self.update_parallel_coordinates_plot()
+
+    def compute_supervoxel_vectors(self, data, segments, unique_segments):
+        num_segments = unique_segments.size
+        num_channels = data.shape[-1]
+        segment_vectors = np.zeros((num_segments, num_channels), dtype=data.dtype)
+
+        for c in range(num_channels):
+            segment_vectors[:, c] = ndimage.mean(
+                data[..., c], labels=segments, index=unique_segments
+            )
+
+        return segment_vectors
+
+    def update_parallel_coordinates_plot(self):
+        if (
+            not self.enable_parallel_coordinates
+            or not self.use_supervoxels
+            or not hasattr(self, "supervoxel_vectors")
+        ):
+            return
+
+        fig = self.build_parallel_coordinates_figure()
+        self.parallel_coordinates_figure = fig
+
+        update = getattr(self.ctrl, "parallel_coordinates_update", None)
+        if update is not None:
+            update(fig)
+
+    def build_parallel_coordinates_figure(self):
+        labels = list(self.state.component_labels)
+        vectors = self.supervoxel_vectors
+        num_dimensions = self.parallel_coordinates_feature_count()
+        dimensions = []
+
+        for idx in range(num_dimensions):
+            values = vectors[:, idx]
+            min_val = float(np.nanmin(values))
+            max_val = float(np.nanmax(values))
+            if np.isclose(min_val, max_val):
+                min_val -= 0.5
+                max_val += 0.5
+
+            dimension = {
+                "label": labels[idx],
+                "values": values.tolist(),
+                "range": [min_val, max_val],
+            }
+
+            constraint = self.parallel_coordinates_constraints.get(idx)
+            if constraint is not None:
+                dimension["constraintrange"] = constraint
+
+            dimensions.append(dimension)
+
+        cluster_dimension = {
+            "label": "Cluster",
+            "values": self.supervoxel_cluster_labels.tolist(),
+            "range": [-0.5, self.num_clusters - 0.5],
+            "tickvals": list(range(self.num_clusters)),
+            "ticktext": [str(i) for i in range(self.num_clusters)],
+        }
+        constraint = self.parallel_coordinates_constraints.get(num_dimensions)
+        if constraint is not None:
+            cluster_dimension["constraintrange"] = constraint
+        dimensions.append(cluster_dimension)
+
+        fig = go.Figure(
+            data=go.Parcoords(
+                dimensions=dimensions,
+                labelside="top",
+                labelfont={
+                    "color": "#222",
+                    "size": 13,
+                },
+                line={
+                    "color": self.supervoxel_cluster_labels.tolist(),
+                    "colorscale": self.build_cluster_colorscale(),
+                    "cmin": -0.5,
+                    "cmax": self.num_clusters - 0.5,
+                    "showscale": False,
+                },
+            )
+        )
+        fig.update_layout(
+            margin={"l": 40, "r": 40, "t": 48, "b": 30},
+            height=320,
+            paper_bgcolor="white",
+        )
+        return fig
+
+    def parallel_coordinates_feature_count(self):
+        return min(len(self.state.component_labels), self.supervoxel_vectors.shape[1])
+
+    def build_cluster_colorscale(self):
+        colors = [
+            self.rgb_to_plotly_color(self.cluster_color_dict[i])
+            for i in range(self.num_clusters)
+        ]
+        if len(colors) == 1:
+            return [[0.0, colors[0]], [1.0, colors[0]]]
+
+        colorscale = []
+        for idx, color in enumerate(colors):
+            left = idx / len(colors)
+            right = (idx + 1) / len(colors)
+            colorscale.append([left, color])
+            colorscale.append([right, color])
+
+        return colorscale
+
+    def rgb_to_plotly_color(self, color):
+        rgb = np.clip(np.asarray(color[:3], dtype=float), 0, 1) * 255
+        r, g, b = rgb.astype(int)
+        return f"rgb({r}, {g}, {b})"
+
+    def on_parallel_coordinates_restyle(self, restyle_data):
+        edits = restyle_data
+        if isinstance(restyle_data, list) and restyle_data:
+            edits = restyle_data[0]
+
+        if not isinstance(edits, dict):
+            return
+
+        changed = False
+        for key, value in edits.items():
+            dim_idx = self.parallel_coordinates_dimension_index(key)
+            if dim_idx is None:
+                continue
+
+            constraint = self.normalize_constraint_range(value)
+            if constraint is None:
+                self.parallel_coordinates_constraints.pop(dim_idx, None)
+            else:
+                self.parallel_coordinates_constraints[dim_idx] = constraint
+
+            changed = True
+
+        if not changed:
+            return
+
+        selected_supervoxels = (
+            self.selected_supervoxels_from_parallel_constraints()
+        )
+        self.state.selected_supervoxels = selected_supervoxels
+        self.state.parallel_coordinates_selection_count = (
+            0 if selected_supervoxels is None else len(selected_supervoxels)
+        )
+        self.indexArray = None
+        self.update_mask_data(selected_supervoxels=selected_supervoxels)
+
+    def parallel_coordinates_dimension_index(self, key):
+        if (
+            not isinstance(key, str)
+            or "constraintrange" not in key
+            or not key.startswith("dimensions[")
+        ):
+            return None
+
+        try:
+            return int(key.split("[", 1)[1].split("]", 1)[0])
+        except (IndexError, ValueError):
+            return None
+
+    def normalize_constraint_range(self, value):
+        if value is None:
+            return None
+
+        if isinstance(value, np.ndarray):
+            value = value.tolist()
+        elif isinstance(value, tuple):
+            value = list(value)
+
+        if not isinstance(value, list) or len(value) == 0:
+            return None
+
+        if len(value) == 1:
+            return self.normalize_constraint_range(value[0])
+
+        if len(value) == 2 and all(self.is_number(v) for v in value):
+            lo, hi = sorted([float(value[0]), float(value[1])])
+            return [lo, hi]
+
+        ranges = []
+        for item in value:
+            normalized = self.normalize_constraint_range(item)
+            if normalized is None:
+                continue
+            if (
+                len(normalized) == 2
+                and all(self.is_number(v) for v in normalized)
+            ):
+                ranges.append(normalized)
+            else:
+                ranges.extend(normalized)
+
+        return ranges or None
+
+    def selected_supervoxels_from_parallel_constraints(self):
+        if not self.parallel_coordinates_constraints:
+            return None
+
+        selected_mask = np.ones(len(self.supervoxel_ids), dtype=bool)
+        cluster_dimension_idx = self.parallel_coordinates_feature_count()
+        for dim_idx, constraint in self.parallel_coordinates_constraints.items():
+            if dim_idx < cluster_dimension_idx:
+                values = self.supervoxel_vectors[:, dim_idx]
+            elif dim_idx == cluster_dimension_idx:
+                values = self.supervoxel_cluster_labels
+            else:
+                continue
+
+            selected_mask &= self.constraint_mask(values, constraint)
+
+        supervoxel_ids = np.asarray(self.supervoxel_ids)
+        return supervoxel_ids[selected_mask].astype(int).tolist()
+
+    def constraint_mask(self, values, constraint):
+        if (
+            len(constraint) == 2
+            and all(self.is_number(v) for v in constraint)
+        ):
+            lo, hi = constraint
+            return (values >= lo) & (values <= hi)
+
+        mask = np.zeros(values.shape, dtype=bool)
+        for lo, hi in constraint:
+            mask |= (values >= lo) & (values <= hi)
+
+        return mask
+
+    def is_number(self, value):
+        return isinstance(value, (int, float, np.integer, np.floating))
+
+    def clear_parallel_coordinates_selection(self):
+        self.parallel_coordinates_constraints = {}
+        self.state.selected_supervoxels = None
+        self.state.parallel_coordinates_selection_count = 0
+        self.indexArray = None
+        self.update_parallel_coordinates_plot()
+        self.update_mask_data(selected_supervoxels=None)
 
     def create_table(self):
         if self.label_map is None:
@@ -513,6 +781,7 @@ class App:
     @change(
         "table_selection",
         "unselected_opacity_multiplier",
+        "show_groups",
     )
     def update_volume_data(self, **kwargs):
         if any(x is None for x in (self.rgb_data, self.gbc_data)):
@@ -554,6 +823,9 @@ class App:
                 self.nonzero_indices
             ]
 
+        if 'visualize-slice' in self.state.show_groups:
+            full_data[:, 3] = np.clip(full_data[:, 3] * 3.0, 0, 1)
+
         full_data = full_data.reshape((*self.data_shape, 4))
 
         # Set the data on the volume
@@ -577,28 +849,32 @@ class App:
         if any(x is None for x in (self.rgb_data, self.gbc_data)):
             return
 
-        if 'filter-cluster' in self.state.show_groups:
-            # Get value of cluster_array from arguments
-            new_cluster_array = kwargs.get('cluster_array', None)
-            clusterChanged = False
-            if new_cluster_array is not None and (self.clusterArray != new_cluster_array):
-                clusterChanged = True
-                self.clusterArray = new_cluster_array
+        if self.use_supervoxels and 'selected_supervoxels' in kwargs:
+            self.indexArray = None
 
-        else:
-            clusterChanged = False
-
-            for i in range(self.num_clusters):
-                if self.state.cluster_array[str(i)]:
+        clusterChanged = False
+        if self.use_supervoxels:
+            if 'filter-cluster' in self.state.show_groups:
+                # Get value of cluster_array from arguments
+                new_cluster_array = kwargs.get('cluster_array', None)
+                if new_cluster_array is not None and (
+                    self.clusterArray != new_cluster_array
+                ):
                     clusterChanged = True
-                    break
-            
-            if clusterChanged:
-                # Set all values of clusterArray to False
-                for i in range(self.num_clusters):
-                    self.clusterArray[str(i)] = False
+                    self.clusterArray = new_cluster_array
 
-                self.state.cluster_array = self.clusterArray # UI not updating
+            else:
+                for i in range(self.num_clusters):
+                    if self.state.cluster_array[str(i)]:
+                        clusterChanged = True
+                        break
+                
+                if clusterChanged:
+                    # Set all values of clusterArray to False
+                    for i in range(self.num_clusters):
+                        self.clusterArray[str(i)] = False
+
+                    self.state.cluster_array = self.clusterArray # UI not updating
 
         alpha = self.compute_alpha(clusterChanged)
         mask_ref = self.volume_view.mask_reference
@@ -706,6 +982,18 @@ class App:
 
         if self.use_supervoxels:
             self.filtered_kmeans_rgb_data = self.flattened_final_colored_volume[self.nonzero_indices]
+            if self.enable_parallel_coordinates:
+                unique_segments = np.asarray(
+                    self.supervoxel_ids, dtype=self.segments_info.dtype
+                )
+                self.supervoxel_vectors = self.compute_supervoxel_vectors(
+                    data, self.segments_info, unique_segments
+                ).astype(float)
+                self.parallel_coordinates_constraints = {}
+                self.state.selected_supervoxels = None
+                self.state.parallel_coordinates_selection_count = 0
+                self.indexArray = None
+                self.update_parallel_coordinates_plot()
 
         # Trigger an update of the data
         self.update_gbc()
@@ -732,7 +1020,11 @@ class App:
         else:
             self.state.max_slice_index = self.data_shape[2] - 1
 
-        self.state.slice_index = 0  # reset index on axis change if needed
+        current_slice_index = int(getattr(self.state, "slice_index", 0) or 0)
+        self.state.slice_index = min(current_slice_index, self.state.max_slice_index)
+
+        if 'visualize-slice' in self.state.show_groups:
+            self._apply_slice_clip(self.state.slice_index, slice_axis)
 
     @change("slice_index")
     @change("show_groups")
@@ -749,22 +1041,63 @@ class App:
 
             if first_call:
                 self._initial_update_slice_call = True
-                return
 
-            fractional_slice_index = slice_index / self.state.max_slice_index
+            self._apply_slice_clip(slice_index, self.state.slice_axis)
 
-            if self.state.slice_axis == "x":
-                self.state.w_clip_x = [fractional_slice_index, fractional_slice_index + 0.01]
-                self.state.w_clip_y = [0, 1]
-                self.state.w_clip_z = [0, 1]
-            elif self.state.slice_axis == "y":
-                self.state.w_clip_y = [fractional_slice_index, fractional_slice_index + 0.01]
-                self.state.w_clip_x = [0, 1]
-                self.state.w_clip_z = [0, 1]
-            else:
-                self.state.w_clip_z = [fractional_slice_index, fractional_slice_index + 0.01]
-                self.state.w_clip_x = [0, 1]
-                self.state.w_clip_y = [0, 1]
+    def _apply_slice_clip(self, slice_index, slice_axis):
+        axis_to_index = {"x": 0, "y": 1, "z": 2}
+        axis_index = axis_to_index.get(slice_axis, 0)
+        axis_size = self.data_shape[axis_index]
+        slice_index = max(0, min(int(slice_index), axis_size - 1))
+
+        slice_clip = [
+            slice_index / axis_size,
+            (slice_index + 1) / axis_size,
+        ]
+
+        self.state.w_clip_x = slice_clip if slice_axis == "x" else [0, 1]
+        self.state.w_clip_y = slice_clip if slice_axis == "y" else [0, 1]
+        self.state.w_clip_z = slice_clip if slice_axis == "z" else [0, 1]
+        self._orient_camera_to_slice_axis(slice_axis)
+
+    def _orient_camera_to_slice_axis(self, slice_axis):
+        bounds = self.volume_view.volume_data.GetBounds()
+        if bounds is None or bounds[0] > bounds[1]:
+            return
+
+        center = [
+            (bounds[0] + bounds[1]) / 2,
+            (bounds[2] + bounds[3]) / 2,
+            (bounds[4] + bounds[5]) / 2,
+        ]
+        size = [
+            bounds[1] - bounds[0],
+            bounds[3] - bounds[2],
+            bounds[5] - bounds[4],
+        ]
+        distance = max(size) * 2
+
+        # App data axes are reversed when loaded into VTK image dimensions.
+        app_axis_to_vtk_axis = {"x": 2, "y": 1, "z": 0}
+        vtk_axis = app_axis_to_vtk_axis.get(slice_axis, 2)
+
+        position = center.copy()
+        position[vtk_axis] += distance
+
+        view_up_by_axis = {
+            0: (0, 0, 1),
+            1: (0, 0, 1),
+            2: (0, 1, 0),
+        }
+
+        camera = self.volume_view.renderer.GetActiveCamera()
+        camera.SetFocalPoint(*center)
+        camera.SetPosition(*position)
+        camera.SetViewUp(*view_up_by_axis[vtk_axis])
+        camera.OrthogonalizeViewUp()
+
+        self.volume_view.renderer.ResetCameraClippingRange()
+        self.ctrl.view_update()
 
     @change("cluster_method")
     @change("cluster_count")
@@ -920,9 +1253,21 @@ class App:
         self.state.setdefault("array_modified", '')
         self.state.setdefault('normalize_ranges', False)
         self.state.setdefault("unselected_opacity_multiplier", 0.1)
+        self.state.setdefault("cluster_array", {})
+        self.state.setdefault("selected_supervoxels", None)
+        self.state.setdefault(
+            "has_parallel_coordinates", self.enable_parallel_coordinates
+        )
+        self.state.setdefault("parallel_coordinates_selection_count", 0)
+        self.state.setdefault("parallel_coordinates_height", 288)
+        self.state.has_parallel_coordinates = self.enable_parallel_coordinates
 
         server = self.server
         ctrl = self.ctrl
+
+        @ctrl.set("clear_parallel_coordinates_selection")
+        def clear_parallel_coordinates_selection():
+            self.clear_parallel_coordinates_selection()
 
         @ctrl.set("get_search")
         def get_search(search):
@@ -961,9 +1306,12 @@ class App:
             # -----------------------------------------------------
             print(search)
             query_params = search[1:].split("&")
+            selected_slice = None
+            slice_axis = None
 
             for param in query_params:
                 key, value = param.split("=")
+                print(f"Key: {key}, Value: {value}")
                 if key == "cluster_method":
                     print("1")
                     self.state.cluster_method = value
@@ -984,6 +1332,31 @@ class App:
                 elif key == "dataset":
                     print("6")
                     self.state.dataset = value
+                elif key =="selected_slice":
+                    print("7")
+                    selected_slice = int(value)
+                elif key == "slice_axis":
+                    print("8")
+                    slice_axis = value
+
+            if selected_slice is not None and slice_axis is not None:
+                if slice_axis not in ("x", "y", "z"):
+                    print(f"Invalid slice_axis: {slice_axis}")
+                    return
+
+                axis_index = {"x": 0, "y": 1, "z": 2}[slice_axis]
+                max_slice_index = self.data_shape[axis_index] - 1
+                selected_slice = max(0, min(selected_slice, max_slice_index))
+
+                show_groups = list(self.state.show_groups or [])
+                if 'visualize-slice' not in show_groups:
+                    show_groups.append('visualize-slice')
+                    self.state.show_groups = show_groups
+
+                self.state.slice_axis = slice_axis
+                self.state.max_slice_index = max_slice_index
+                self.state.slice_index = selected_slice
+                self._apply_slice_clip(selected_slice, slice_axis)
 
         self.state.trame__title = "MultivariateView"
         self.state.trame__favicon = ASSETS.favicon
@@ -1045,6 +1418,11 @@ class App:
                             v.VBtn(icon="mdi-align-vertical-bottom", value="voxel-means-plot")
                             v.VBtn(icon="mdi-table", value="table")
                             v.VBtn(icon="mdi-scatter-plot", value="filter-cluster")
+                            v.VBtn(
+                                icon="mdi-chart-timeline-variant",
+                                value="parallel-coordinates",
+                                v_if="has_parallel_coordinates",
+                            )
                             v.VBtn(icon="mdi-video-2d", value="visualize-slice")
 
                         v.VSpacer()
@@ -1458,6 +1836,75 @@ class App:
                                 style="margin-top: 20px !important; margin-left: 30% !important;",
                                 click="window.open(`http://127.0.0.1:8050?axis=${slice_axis}&index=${slice_index}&data=${data_path}`, '_blank')"
                             )
+
+                with v.VCard(
+                    flat=True,
+                    v_if="has_parallel_coordinates",
+                    v_show="show_groups.includes('parallel-coordinates')",
+                    classes="pb-1 px-2",
+                    style=(
+                        "z-index: 2; position: absolute; left: 0.5rem; "
+                        "right: 0.5rem; bottom: 0.5rem;"
+                    ),
+                ):
+                    html.Div(
+                        style=(
+                            "height: 0.7rem; cursor: row-resize; "
+                            "display: flex; align-items: center; "
+                            "justify-content: center; margin: 0 -0.5rem;"
+                        ),
+                        mousedown=(
+                            "$event.preventDefault(); "
+                            "const startY = $event.clientY; "
+                            "const startHeight = parallel_coordinates_height; "
+                            "const onMove = (e) => { "
+                            "parallel_coordinates_height = Math.max(180, "
+                            "Math.min(Math.round(window.innerHeight * 0.72), "
+                            "startHeight + startY - e.clientY)); "
+                            "window.dispatchEvent(new Event('resize')); "
+                            "}; "
+                            "const onUp = () => { "
+                            "window.removeEventListener('mousemove', onMove); "
+                            "window.removeEventListener('mouseup', onUp); "
+                            "window.dispatchEvent(new Event('resize')); "
+                            "}; "
+                            "window.addEventListener('mousemove', onMove); "
+                            "window.addEventListener('mouseup', onUp);"
+                        ),
+                    )
+                    with v.VToolbar(density="compact", flat=True):
+                        v.VSpacer()
+                        v.VLabel(
+                            "{{ parallel_coordinates_selection_count ? parallel_coordinates_selection_count + ' selected' : 'No brush' }}",
+                            classes="text-caption mr-2",
+                        )
+                        v.VBtn(
+                            icon="mdi-filter-remove-outline",
+                            density="compact",
+                            variant="text",
+                            click=ctrl.clear_parallel_coordinates_selection,
+                        )
+                    v.VDivider()
+                    with html.Div(
+                        style=(
+                            "`width: 100%; height: "
+                            "${parallel_coordinates_height}px; "
+                            "min-height: 180px; max-height: 72vh;`",
+                        ),
+                    ):
+                        parallel_coordinates = plotly.Figure(
+                            display_logo=False,
+                            display_mode_bar="true",
+                            responsive=True,
+                            restyle=(
+                                self.on_parallel_coordinates_restyle,
+                                "[$event]",
+                            ),
+                            style="width: 100%; height: 100%;",
+                        )
+                        self.server.controller.parallel_coordinates_update = (
+                            parallel_coordinates.update
+                        )
                 
             # print(layout)
             return layout
