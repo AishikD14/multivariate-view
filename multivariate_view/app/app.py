@@ -1334,6 +1334,7 @@ class App:
         )
         self.state.setdefault("parallel_coordinates_selection_count", 0)
         self.state.setdefault("parallel_coordinates_height", 288)
+        self.state.setdefault("dataset", self.dataset)
         self.state.has_parallel_coordinates = self.enable_parallel_coordinates
 
         server = self.server
@@ -1916,7 +1917,7 @@ class App:
                                 color="primary",
                                 class_="mx-2 mt-2",
                                 style="margin-top: 20px !important; margin-left: 30% !important;",
-                                click="window.open(`http://127.0.0.1:8050?axis=${slice_axis}&index=${slice_index}&data=${data_path}`, '_blank')"
+                                click="window.open(`http://127.0.0.1:8050?axis=${slice_axis}&index=${slice_index}&data=${encodeURIComponent(dataset)}`, '_blank')"
                             )
 
                 with v.VCard(
