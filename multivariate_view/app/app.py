@@ -147,6 +147,7 @@ class App:
         self.parallel_coordinates_constraints = {}
         self.parallel_coordinates_figure = None
         self.supervoxel_visualization_figure = None
+        self.supervoxel_plot_selection_revision = 0
         self.supervoxel_embeddings = {}
         self.volume_window_center = (0.0, 0.18)
 
@@ -537,6 +538,7 @@ class App:
             margin={"l": 40, "r": 40, "t": 48, "b": 30},
             height=320,
             paper_bgcolor="white",
+            selectionrevision=self.supervoxel_plot_selection_revision,
         )
         return fig
 
@@ -600,6 +602,7 @@ class App:
             showlegend=False,
             dragmode="lasso",
             selectdirection="any",
+            selectionrevision=self.supervoxel_plot_selection_revision,
         )
         return fig
 
@@ -845,6 +848,10 @@ class App:
         self.parallel_coordinates_constraints = {}
         self.state.selected_supervoxels = None
         self.state.parallel_coordinates_selection_count = 0
+        self.supervoxel_plot_selection_revision += 1
+        self.state.supervoxel_plot_key = (
+            getattr(self.state, "supervoxel_plot_key", 0) + 1
+        )
         self.indexArray = None
         self.update_parallel_coordinates_plot()
         self.update_mask_data(selected_supervoxels=None)
@@ -1549,6 +1556,7 @@ class App:
         )
         self.state.setdefault("parallel_coordinates_selection_count", 0)
         self.state.setdefault("parallel_coordinates_height", 288)
+        self.state.setdefault("supervoxel_plot_key", 0)
         self.state.setdefault("dataset", self.dataset)
         self.state.setdefault("supervoxel_visualization", "parallel-coordinates")
         self.state.has_parallel_coordinates = self.enable_parallel_coordinates
@@ -1788,6 +1796,14 @@ class App:
                                 label="Parallel Coordinates",
                                 value="parallel-coordinates",
                             )
+                        v.VBtn(
+                            "Clear Selection",
+                            color="primary",
+                            variant="tonal",
+                            density="compact",
+                            classes="ml-2 mt-2",
+                            click=ctrl.clear_parallel_coordinates_selection,
+                        )
 
                     # -------------------------------------------------------------------------------------
 
@@ -2207,6 +2223,7 @@ class App:
                         ),
                     ):
                         parallel_coordinates = plotly.Figure(
+                            key=("supervoxel_plot_key",),
                             display_logo=False,
                             display_mode_bar=True,
                             mode_bar_buttons_to_add=[
