@@ -152,6 +152,8 @@ class App:
         self.cluster_method = "kmeans"
         self.use_autoencoder = False
         self.dataset = "CeCoFeGd"
+        self.slice_index_start = (0, 0, 0)
+        self.slice_index_end = (0, 0, 0)
 
         self.ui = self._build_ui()
         self.load_data()
@@ -207,6 +209,7 @@ class App:
         # This removes faces that are all zeros recursively until
         # the first non-zero voxel is hit.
         # Our sample data has a *lot* of padding.
+        original_data_shape = data.shape[:-1]
         data = _remove_padding_uniform(data)
         print("Data shape after padding removal ", data.shape)
 
@@ -227,6 +230,18 @@ class App:
         # Remember the data shape (without the multichannel part)
         self.data_shape = data.shape[:-1]
         self.num_channels = data.shape[-1]
+        self.slice_index_start = tuple(
+            0 if original_size == cropped_size
+            else (original_size - cropped_size - 1) // 2
+            for original_size, cropped_size in zip(
+                original_data_shape, self.data_shape
+            )
+        )
+        self.slice_index_end = tuple(
+            start + size - 1
+            for start, size in zip(self.slice_index_start, self.data_shape)
+        )
+        self._update_slice_index_bounds(getattr(self.state, "slice_axis", "x"))
 
         self.raw_unpadded_flattened_data = data.reshape(
             np.prod(self.data_shape), self.num_channels
@@ -1077,15 +1092,7 @@ class App:
 
     @change("slice_axis")
     def update_max_slice_index(self, slice_axis, **kwargs):
-        if slice_axis == "x":
-            self.state.max_slice_index = self.data_shape[0] - 1
-        elif slice_axis == "y":
-            self.state.max_slice_index = self.data_shape[1] - 1
-        else:
-            self.state.max_slice_index = self.data_shape[2] - 1
-
-        current_slice_index = int(getattr(self.state, "slice_index", 0) or 0)
-        self.state.slice_index = min(current_slice_index, self.state.max_slice_index)
+        self._update_slice_index_bounds(slice_axis)
 
         if 'visualize-slice' in self.state.show_groups:
             self._apply_slice_clip(self.state.slice_index, slice_axis)
@@ -1108,15 +1115,43 @@ class App:
 
             self._apply_slice_clip(slice_index, self.state.slice_axis)
 
+    def _update_slice_index_bounds(self, slice_axis):
+        axis_to_index = {"x": 0, "y": 1, "z": 2}
+        axis_index = axis_to_index.get(slice_axis, 0)
+        min_slice_index = self.slice_index_start[axis_index]
+        max_slice_index = self.slice_index_end[axis_index]
+
+        self.state.min_slice_index = min_slice_index
+        self.state.max_slice_index = max_slice_index
+
+        current_slice_index = int(
+            getattr(self.state, "slice_index", min_slice_index)
+            or min_slice_index
+        )
+        self.state.slice_index = max(
+            min_slice_index,
+            min(current_slice_index, max_slice_index),
+        )
+
+    def _to_cropped_slice_index(self, slice_index, slice_axis):
+        axis_to_index = {"x": 0, "y": 1, "z": 2}
+        axis_index = axis_to_index.get(slice_axis, 0)
+        return int(slice_index) - self.slice_index_start[axis_index]
+
     def _apply_slice_clip(self, slice_index, slice_axis):
         axis_to_index = {"x": 0, "y": 1, "z": 2}
         axis_index = axis_to_index.get(slice_axis, 0)
         axis_size = self.data_shape[axis_index]
-        slice_index = max(0, min(int(slice_index), axis_size - 1))
+        cropped_slice_index = self._to_cropped_slice_index(
+            slice_index, slice_axis
+        )
+        cropped_slice_index = max(
+            0, min(cropped_slice_index, axis_size - 1)
+        )
 
         slice_clip = [
-            slice_index / axis_size,
-            (slice_index + 1) / axis_size,
+            cropped_slice_index / axis_size,
+            (cropped_slice_index + 1) / axis_size,
         ]
 
         self.state.w_clip_x = slice_clip if slice_axis == "x" else [0, 1]
@@ -1419,9 +1454,11 @@ class App:
                     print(f"Invalid slice_axis: {slice_axis}")
                     return
 
-                axis_index = {"x": 0, "y": 1, "z": 2}[slice_axis]
-                max_slice_index = self.data_shape[axis_index] - 1
-                selected_slice = max(0, min(selected_slice, max_slice_index))
+                self._update_slice_index_bounds(slice_axis)
+                selected_slice = max(
+                    self.state.min_slice_index,
+                    min(selected_slice, self.state.max_slice_index),
+                )
 
                 show_groups = list(self.state.show_groups or [])
                 if 'visualize-slice' not in show_groups:
@@ -1429,7 +1466,6 @@ class App:
                     self.state.show_groups = show_groups
 
                 self.state.slice_axis = slice_axis
-                self.state.max_slice_index = max_slice_index
                 self.state.slice_index = selected_slice
                 self._apply_slice_clip(selected_slice, slice_axis)
 
