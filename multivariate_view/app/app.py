@@ -469,7 +469,7 @@ class App:
             dimensions.append(dimension)
 
         cluster_dimension = {
-            "label": "Cluster",
+            "label": "Cluster ID",
             "values": self.supervoxel_cluster_labels.tolist(),
             "range": [-0.5, self.num_clusters - 0.5],
             "tickvals": list(range(self.num_clusters)),
@@ -1963,7 +1963,7 @@ class App:
                     ):
                         parallel_coordinates = plotly.Figure(
                             display_logo=False,
-                            display_mode_bar="true",
+                            display_mode_bar=False,
                             responsive=True,
                             restyle=(
                                 self.on_parallel_coordinates_restyle,
