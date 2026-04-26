@@ -155,7 +155,7 @@ class App:
         self.num_clusters = 5
         self.cluster_method = "kmeans"
         self.use_autoencoder = False
-        self.dataset = "CeCoFeGd"
+        self.dataset = args.data if args.data else "CeCoFeGd"
         self.slice_index_start = (0, 0, 0)
         self.slice_index_end = (0, 0, 0)
 
