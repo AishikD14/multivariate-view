@@ -7,6 +7,7 @@ import numpy as np
 import plotly.graph_objects as go
 
 from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from trame.app import get_server
 from trame.assets.remote import download_file_from_google_drive
@@ -145,6 +146,8 @@ class App:
         self.opacity_data = None
         self.parallel_coordinates_constraints = {}
         self.parallel_coordinates_figure = None
+        self.supervoxel_visualization_figure = None
+        self.supervoxel_embeddings = {}
         self.volume_window_center = (0.0, 0.18)
 
         # Set the default values
@@ -393,6 +396,7 @@ class App:
         self.supervoxel_vectors = segment_vectors.astype(float)
         self.supervoxel_cluster_labels = cluster_labels.astype(int)
         self.cluster_color_dict = cluster_color_dict
+        self.supervoxel_embeddings = {}
 
         final_colored_volume = np.zeros(data.shape)
         self.final_cluster_labels = np.zeros(data.shape)
@@ -428,7 +432,7 @@ class App:
 
         print("---------------------------------------------------")
 
-        self.update_parallel_coordinates_plot()
+        self.update_supervoxel_visualization_plot()
 
     def compute_supervoxel_vectors(self, data, segments, unique_segments):
         num_segments = unique_segments.size
@@ -443,6 +447,13 @@ class App:
         return segment_vectors
 
     def update_parallel_coordinates_plot(self):
+        self.update_supervoxel_visualization_plot()
+
+    @change("supervoxel_visualization")
+    def update_supervoxel_visualization_mode(self, **kwargs):
+        self.update_supervoxel_visualization_plot()
+
+    def update_supervoxel_visualization_plot(self):
         if (
             not self.enable_parallel_coordinates
             or not self.use_supervoxels
@@ -450,8 +461,18 @@ class App:
         ):
             return
 
-        fig = self.build_parallel_coordinates_figure()
-        self.parallel_coordinates_figure = fig
+        visualization = getattr(
+            self.state, "supervoxel_visualization", "parallel-coordinates"
+        )
+        if visualization == "pca":
+            fig = self.build_supervoxel_scatter_figure("pca")
+        elif visualization == "tsne":
+            fig = self.build_supervoxel_scatter_figure("tsne")
+        else:
+            fig = self.build_parallel_coordinates_figure()
+            self.parallel_coordinates_figure = fig
+
+        self.supervoxel_visualization_figure = fig
 
         update = getattr(self.ctrl, "parallel_coordinates_update", None)
         if update is not None:
@@ -518,6 +539,164 @@ class App:
             paper_bgcolor="white",
         )
         return fig
+
+    def build_supervoxel_scatter_figure(self, method):
+        embedding = self.get_supervoxel_embedding(method)
+        cluster_labels = self.supervoxel_cluster_labels.astype(int)
+        selected_points = self.selected_supervoxel_point_indices()
+        colors = [
+            self.rgb_to_plotly_color(self.cluster_color_dict[cluster_id])
+            for cluster_id in cluster_labels
+        ]
+        hover_text = [
+            f"Supervoxel {supervoxel_id}<br>Cluster {cluster_id}"
+            for supervoxel_id, cluster_id in zip(
+                self.supervoxel_ids, cluster_labels
+            )
+        ]
+        title = "PCA" if method == "pca" else "t-SNE"
+
+        fig = go.Figure(
+            data=go.Scatter(
+                x=embedding[:, 0].tolist(),
+                y=embedding[:, 1].tolist(),
+                mode="markers",
+                customdata=self.supervoxel_ids,
+                selectedpoints=selected_points,
+                text=hover_text,
+                hoverinfo="text+x+y",
+                marker={
+                    "color": colors,
+                    "size": 8,
+                    "opacity": 0.85,
+                    "line": {"color": "rgba(20, 20, 20, 0.35)", "width": 0.5},
+                },
+                selected={
+                    "marker": {
+                        "opacity": 1,
+                        "size": 11,
+                    }
+                },
+                unselected={"marker": {"opacity": 0.22}},
+            )
+        )
+        fig.update_layout(
+            margin={"l": 48, "r": 28, "t": 38, "b": 42},
+            height=320,
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+            xaxis={
+                "title": f"{title} 1",
+                "zeroline": False,
+                "showgrid": True,
+                "gridcolor": "rgba(0,0,0,0.08)",
+            },
+            yaxis={
+                "title": f"{title} 2",
+                "zeroline": False,
+                "showgrid": True,
+                "gridcolor": "rgba(0,0,0,0.08)",
+            },
+            showlegend=False,
+            dragmode="lasso",
+            selectdirection="any",
+        )
+        return fig
+
+    def selected_supervoxel_point_indices(self):
+        selected_supervoxels = getattr(self.state, "selected_supervoxels", None)
+        if not selected_supervoxels:
+            return None
+
+        selected_ids = set(map(int, selected_supervoxels))
+        return [
+            idx
+            for idx, supervoxel_id in enumerate(self.supervoxel_ids)
+            if int(supervoxel_id) in selected_ids
+        ]
+
+    def on_supervoxel_scatter_selected(self, selected_data):
+        if self.state.supervoxel_visualization not in ("pca", "tsne"):
+            return
+
+        points = self.selection_points(selected_data)
+        if not points:
+            selected_supervoxels = None
+        else:
+            selected_supervoxels = []
+            for point in points:
+                supervoxel_id = point.get("customdata")
+                if supervoxel_id is None:
+                    point_index = point.get("pointIndex", point.get("pointNumber"))
+                    if point_index is None:
+                        continue
+                    supervoxel_id = self.supervoxel_ids[int(point_index)]
+
+                selected_supervoxels.append(int(supervoxel_id))
+
+        self.state.selected_supervoxels = selected_supervoxels
+        self.state.parallel_coordinates_selection_count = (
+            0 if selected_supervoxels is None else len(selected_supervoxels)
+        )
+        self.indexArray = None
+        self.update_mask_data(selected_supervoxels=selected_supervoxels)
+
+    def clear_supervoxel_scatter_selection(self):
+        if self.state.supervoxel_visualization not in ("pca", "tsne"):
+            return
+
+        self.state.selected_supervoxels = None
+        self.state.parallel_coordinates_selection_count = 0
+        self.indexArray = None
+        self.update_mask_data(selected_supervoxels=None)
+
+    def selection_points(self, selected_data):
+        event_data = selected_data
+        if isinstance(event_data, list) and all(
+            isinstance(point, dict) for point in event_data
+        ):
+            return event_data
+
+        if isinstance(event_data, list) and event_data:
+            event_data = event_data[0]
+
+        if not isinstance(event_data, dict):
+            return []
+
+        points = event_data.get("points", [])
+        return points if isinstance(points, list) else []
+
+    def get_supervoxel_embedding(self, method):
+        if method in self.supervoxel_embeddings:
+            return self.supervoxel_embeddings[method]
+
+        vectors = np.asarray(self.supervoxel_vectors, dtype=float)
+        if vectors.shape[0] < 2:
+            embedding = np.zeros((vectors.shape[0], 2))
+            self.supervoxel_embeddings[method] = embedding
+            return embedding
+
+        centered = vectors - np.nanmean(vectors, axis=0)
+        scale = np.nanstd(centered, axis=0)
+        scale[np.isclose(scale, 0)] = 1
+        vectors = centered / scale
+
+        if method == "pca":
+            embedding = PCA(n_components=2).fit_transform(vectors)
+        elif method == "tsne":
+            perplexity = min(30, max(1, vectors.shape[0] - 1))
+            embedding = TSNE(
+                n_components=2,
+                perplexity=perplexity,
+                init="pca",
+                learning_rate=200,
+                random_state=42,
+            ).fit_transform(vectors)
+        else:
+            raise ValueError(f"Unknown supervoxel embedding method: {method}")
+
+        self.supervoxel_embeddings[method] = embedding
+        return embedding
 
     def parallel_coordinates_feature_count(self):
         return min(len(self.state.component_labels), self.supervoxel_vectors.shape[1])
@@ -1068,6 +1247,7 @@ class App:
                 self.supervoxel_vectors = self.compute_supervoxel_vectors(
                     data, self.segments_info, unique_segments
                 ).astype(float)
+                self.supervoxel_embeddings = {}
                 self.parallel_coordinates_constraints = {}
                 self.state.selected_supervoxels = None
                 self.state.parallel_coordinates_selection_count = 0
@@ -1370,6 +1550,7 @@ class App:
         self.state.setdefault("parallel_coordinates_selection_count", 0)
         self.state.setdefault("parallel_coordinates_height", 288)
         self.state.setdefault("dataset", self.dataset)
+        self.state.setdefault("supervoxel_visualization", "parallel-coordinates")
         self.state.has_parallel_coordinates = self.enable_parallel_coordinates
 
         server = self.server
@@ -1475,7 +1656,7 @@ class App:
         with VAppLayout(server, full_height=True) as layout:
             client.Style('html { overflow-y: hidden; }')
 
-            client.ClientTriggers(mounted=(ctrl.get_search, "[window.location.search]"))
+            # client.ClientTriggers(mounted=(ctrl.get_search, "[window.location.search]"))
 
             with vtk.VtkRemoteView(
                 self.render_window,
@@ -1580,6 +1761,33 @@ class App:
                         lens='lens_center = $event',
                         # style="position: sticky; top: 3rem; z-index: 1; background: white;",
                     )
+
+                    # -------------------------------------------------------------------------------------
+
+                    # Supervoxel visualization
+                    with v.VCard(
+                        flat=True,
+                        v_if="has_parallel_coordinates",
+                        v_show="show_control_panel && show_groups.includes('parallel-coordinates')",
+                        classes="py-1",
+                    ):
+                        v.VLabel("Supervoxel plot", classes="text-body-2 ml-1")
+                        v.VDivider(classes="mr-n4")
+                        with v.VRadioGroup(
+                            v_model=(
+                                "supervoxel_visualization",
+                                "parallel-coordinates",
+                            ),
+                            density="compact",
+                            hide_details=True,
+                            classes="ml-2",
+                        ):
+                            v.VRadio(label="PCA", value="pca")
+                            v.VRadio(label="t-SNE", value="tsne")
+                            v.VRadio(
+                                label="Parallel Coordinates",
+                                value="parallel-coordinates",
+                            )
 
                     # -------------------------------------------------------------------------------------
 
@@ -2000,8 +2208,24 @@ class App:
                     ):
                         parallel_coordinates = plotly.Figure(
                             display_logo=False,
-                            display_mode_bar=False,
+                            display_mode_bar=True,
+                            mode_bar_buttons_to_add=[
+                                "select2d",
+                                "lasso2d",
+                            ],
                             responsive=True,
+                            selected=(
+                                self.on_supervoxel_scatter_selected,
+                                "[(($event && $event.points) || []).map((point) => ({ "
+                                "customdata: point.customdata, "
+                                "pointIndex: point.pointIndex, "
+                                "pointNumber: point.pointNumber "
+                                "}))]",
+                            ),
+                            deselect=(
+                                self.clear_supervoxel_scatter_selection,
+                                "[]",
+                            ),
                             restyle=(
                                 self.on_parallel_coordinates_restyle,
                                 "[$event]",
