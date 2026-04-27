@@ -168,7 +168,7 @@ class App:
 
     def _on_ready(self, **kwargs):
         pass
-    
+
     def load_data(self):
         try:
             header, data = load_dataset(Path(data_dict[self.dataset]["data_path"]))
@@ -272,7 +272,7 @@ class App:
             if not data_dict[self.dataset]["segment_path"].exists():
                 # Generate supervoxels
                 segments, _ = self.generate_supervoxel(data, True)
-                
+
             else:
                 # Load the supervoxels
                 segments = np.load(data_dict[self.dataset]["segment_path"])
@@ -328,7 +328,7 @@ class App:
         # ------------------------------------------------------------------------------------------------
 
         if self.use_supervoxels:
-        
+
             print("---------------------------------------------------")
 
             nonzero_final_colored_volume = self.flattened_final_colored_volume[self.nonzero_indices]
@@ -416,10 +416,10 @@ class App:
         self.final_cluster_labels = cluster_ids
 
         max_cluster_id = max(cluster_color_dict.keys())
-        color_array = np.zeros((max_cluster_id + 1, 3), dtype=np.float32) 
+        color_array = np.zeros((max_cluster_id + 1, 3), dtype=np.float32)
 
         for cid, color in cluster_color_dict.items():
-            color_array[cid] = color 
+            color_array[cid] = color
 
         final_colored_volume[:] = color_array[cluster_ids]
 
@@ -531,6 +531,7 @@ class App:
             "label": "Supervoxel ID",
             "values": self.supervoxel_ids,
             "range": [min_supervoxel_id, max_supervoxel_id],
+            "visible": False,
         }
         constraint = self.parallel_coordinates_constraints.get(
             supervoxel_id_dimension_idx
@@ -1175,7 +1176,7 @@ class App:
                     if self.state.cluster_array[str(i)]:
                         clusterChanged = True
                         break
-                
+
                 if clusterChanged:
                     # Set all values of clusterArray to False
                     for i in range(self.num_clusters):
@@ -1238,7 +1239,7 @@ class App:
         if not self.state.array_modified:
             # No updates were actually made. Just return
             return
-        
+
         print("data_channels - changed")
         self.state.component_labels = [
             item.get("label")
@@ -1545,7 +1546,7 @@ class App:
                 cluster_mask = np.zeros(self.data_shape, dtype=bool)
                 supervoxel_mask = np.zeros(self.data_shape, dtype=bool)
                 self.indexArray = np.zeros(self.data_shape, dtype=bool)
-                
+
                 if len(selected_clusters) > 0:
                     # Convert selected_clusters and selected_supervoxels to sets of ints
                     selected_cluster_ids = set(map(int, selected_clusters))
@@ -1707,402 +1708,530 @@ class App:
         self.state.trame__favicon = ASSETS.favicon
 
         with VAppLayout(server, full_height=True) as layout:
-            client.Style('html { overflow-y: hidden; }')
+            client.Style(
+                'html, body, #app, .v-application, .v-application__wrap '
+                '{ height: 100%; overflow-y: hidden; }'
+            )
 
             # client.ClientTriggers(mounted=(ctrl.get_search, "[window.location.search]"))
 
-            with vtk.VtkRemoteView(
-                self.render_window,
-                interactive_ratio=1,
+            with html.Div(
                 style=(
-                    "`position: absolute; top: 0; left: 0; right: 0; "
-                    "bottom: ${has_parallel_coordinates && "
-                    "show_groups.includes('parallel-coordinates') ? "
-                    "parallel_coordinates_height + 36 : 0}px;`",
+                    "height: 100%; width: 100%; display: flex; "
+                    "flex-direction: column; overflow: hidden;"
                 ),
-            ) as html_view:
-                ctrl.reset_camera = self.reset_camera
-                ctrl.view_update = html_view.update
-
-                with v.VCard(
-                    classes=(
-                        "{ 'ma-4': 1, 'rounded-xl': !show_control_panel }",
+            ):
+                with vtk.VtkRemoteView(
+                    self.render_window,
+                    interactive_ratio=1,
+                    style=(
+                        "position: relative; flex: 1 1 auto; min-height: 0; "
+                        "width: 100%; overflow: hidden;"
                     ),
-                    style="z-index: 1; position: absolute; top: 0.2rem; left: 0.2rem; max-height: calc(100vh - 2.4rem); overflow: auto;",
-                ):
-                    with v.VToolbar(
-                        density="compact",
-                        style="position: sticky; top: 0;",
-                    ):
-                        v.VProgressLinear(
-                            color="primary",
-                            indeterminate=("trame__busy",),
-                            v_show="trame__busy",
-                            absolute=True,
-                            style="bottom: 0; top: none;",
-                        )
-                        v.VBtn(
-                            icon="mdi-cogs",
-                            click="show_control_panel = !show_control_panel",
-                            density="compact",
-                            classes="mx-3",
-                        )
-                        v.VSpacer()
+                ) as html_view:
+                    ctrl.reset_camera = self.reset_camera
+                    ctrl.view_update = html_view.update
 
-                        with v.VBtnToggle(
-                            v_show=("show_control_panel", True),
-                            v_model=("show_groups", []),
-                            # base_color="grey-darken-1",
-                            # color="grey-darken-4",
-                            variant="outlined",
-                            density="conpact",
-                            multiple=True,
-                            divided=True,
-                            classes="mr-4",
-                        ):
-                            v.VBtn(icon="mdi-database", value="tune-data", v_if="data_channels && Object.keys(data_channels).length")
-                            v.VBtn(icon="mdi-magnify", value="lens")
-                            v.VBtn(icon="mdi-palette", value="color")
-                            v.VBtn(icon="mdi-eye-settings-outline",value="rendering")
-                            v.VBtn(icon="mdi-chart-histogram", value="sampling")
-                            v.VBtn(icon="mdi-crop", value="clip")
-                            v.VBtn(icon="mdi-sigma", value="voxel-means")
-                            v.VBtn(icon="mdi-align-vertical-bottom", value="voxel-means-plot")
-                            v.VBtn(icon="mdi-table", value="table")
-                            v.VBtn(icon="mdi-scatter-plot", value="filter-cluster")
-                            v.VBtn(
-                                icon="mdi-chart-timeline-variant",
-                                value="parallel-coordinates",
-                                v_if="has_parallel_coordinates",
-                            )
-                            v.VBtn(icon="mdi-video-2d", value="visualize-slice")
-
-                        v.VSpacer()
-
-                        if self.server.hot_reload:
-                            v.VBtn(
-                                v_show=("show_control_panel", True),
-                                icon="mdi-refresh",
-                                click=self.ctrl.on_server_reload,
-                                density="compact",
-                            )
-
-                        v.VBtn(
-                            icon="mdi-crop-free",
-                            density="compact",
-                            classes="mr-3",
-                            click=ctrl.reset_camera,
-                        )
-
-                    # Main widget
-                    radvolviz.NdColorMap(
-                        brush_mode=1 if self.use_supervoxels else 0,
-                        v_show="show_control_panel",
-                        component_labels=('component_labels', []),
-                        unrotated_bin_data=('unrotated_bin_data', []),
-                        unrotated_component_coords=(
-                            'unrotated_component_coords',
-                            [],
+                    with v.VCard(
+                        classes=(
+                            "{ 'ma-4': 1, 'rounded-xl': !show_control_panel }",
                         ),
-                        unrotated_bin_colors=('unrotated_bin_colors', []),
-                        size=400,
-                        rotation=('w_rotation', 0),
-                        sample_size=('w_sample_size', 1100),
-                        number_of_bins=('w_bins', 6),
-                        show_lens=("show_groups.includes('lens')",),
-                        lens_radius=('w_lradius', 0.5),
-                        lens='lens_center = $event',
-                        # style="position: sticky; top: 3rem; z-index: 1; background: white;",
-                    )
-
-                    # -------------------------------------------------------------------------------------
-
-                    # Supervoxel visualization
-                    with v.VCard(
-                        flat=True,
-                        v_if="has_parallel_coordinates",
-                        v_show="show_control_panel && show_groups.includes('parallel-coordinates')",
-                        classes="py-1",
+                        style="z-index: 1; position: absolute; top: 0.2rem; left: 0.2rem; max-height: calc(100% - 0.4rem); overflow: auto;",
                     ):
-                        v.VLabel("Supervoxel plot", classes="text-body-2 ml-1")
-                        v.VDivider(classes="mr-n4")
-                        with v.VRadioGroup(
-                            v_model=(
-                                "supervoxel_visualization",
-                                "parallel-coordinates",
-                            ),
+                        with v.VToolbar(
                             density="compact",
-                            hide_details=True,
-                            classes="ml-2",
+                            style="position: sticky; top: 0;",
                         ):
-                            v.VRadio(label="PCA", value="pca")
-                            v.VRadio(label="t-SNE", value="tsne")
-                            v.VRadio(
-                                label="Parallel Coordinates",
-                                value="parallel-coordinates",
+                            v.VProgressLinear(
+                                color="primary",
+                                indeterminate=("trame__busy",),
+                                v_show="trame__busy",
+                                absolute=True,
+                                style="bottom: 0; top: none;",
                             )
-                        v.VBtn(
-                            "Clear Selection",
-                            color="primary",
-                            variant="tonal",
-                            density="compact",
-                            classes="ml-2 mt-2",
-                            click=ctrl.clear_parallel_coordinates_selection,
-                        )
-
-                    # -------------------------------------------------------------------------------------
-
-                    # Lense control
-                    with v.VCard(
-                        flat=True,
-                        v_show="show_control_panel && show_groups.includes('lens')",
-                        classes="py-1",
-                    ):
-                        v.VSlider(
-                            v_model='w_lradius',
-                            min=0.001,
-                            max=1.0,
-                            step=0.001,
-                            density='compact',
-                            prepend_icon="mdi-radius-outline",
-                            messages="Adjust lens size",
-                        )
-                        v.VSwitch(
-                            label="Invert lens",
-                            v_model=('w_linvert', False),
-                            messages="Invert lens",
-                            density="compact",
-                            hide_details=True,
-                            inset=True,
-                            color="green",
-                            classes="ml-2",
-                        )
-
-                    # --------------------------------------------------------------------------------------
-
-                    # Color / Rotation management
-                    with v.VCard(
-                        flat=True,
-                        v_show="show_control_panel && show_groups.includes('color')",
-                        classes="py-1",
-                    ):
-                        v.VSlider(
-                            v_model='w_rotation',
-                            min=0,
-                            max=360,
-                            step=5,
-                            density='compact',
-                            prepend_icon="mdi-rotate-360",
-                            messages="Rotate color wheel",
-                        )
-
-                    # ---------------------------------------------------------------------------------------
-
-                    # Rendering settings
-                    with v.VCard(
-                        flat=True,
-                        v_show="show_control_panel && show_groups.includes('rendering')",
-                        classes="py-1",
-                    ):
-                        with v.VCol():
-                            v.VSwitch(
-                                label="Use shadow",
-                                v_model=('w_rendering_shadow', True),
-                                density='compact',
+                            v.VBtn(
+                                icon="mdi-cogs",
+                                click="show_control_panel = !show_control_panel",
+                                density="compact",
+                                classes="mx-3",
                             )
-                            v.VSwitch(
-                                label="Use white background",
-                                v_model=('w_rendering_bg', False),
-                                density='compact',
-                            )
+                            v.VSpacer()
 
-                    # --------------------------------------------------------------------------------------
-
-                    # Data sampling
-                    with v.VCard(
-                        flat=True,
-                        v_show="show_control_panel && show_groups.includes('sampling')",
-                        classes="py-1",
-                    ):
-                        v.VSlider(
-                            v_model='w_sample_size',
-                            min=100,
-                            max=10000,
-                            step=500,
-                            density='compact',
-                            prepend_icon="mdi-blur-radial",
-                            messages="Adjust sampling size",
-                        )
-                        v.VSlider(
-                            v_model='w_bins',
-                            min=1,
-                            max=10,
-                            step=1,
-                            density='compact',
-                            prepend_icon="mdi-chart-scatter-plot-hexbin",
-                            messages="Number of bins for the sampling algorithm",
-                        )
-
-                    # ---------------------------------------------------------------------------------------
-
-                    # Cropping
-                    with v.VCard(
-                        flat=True,
-                        v_show="show_control_panel && show_groups.includes('clip')",
-                        classes="py-1 pr-4",
-                    ):
-                        v.VLabel("Crop dataset", classes="text-body-2 ml-1")
-                        v.VDivider(classes="mr-n4")
-                        v.VRangeSlider(
-                            label='X',
-                            v_model=('w_clip_x', [0, 1]),
-                            min=0.0,
-                            max=1.0,
-                            step=0.001,
-                            density='compact',
-                            hide_details=True,
-                        )
-                        v.VRangeSlider(
-                            label='Y',
-                            v_model=('w_clip_y', [0, 1]),
-                            min=0.0,
-                            max=1.0,
-                            step=0.001,
-                            density='compact',
-                            hide_details=True,
-                        )
-                        v.VRangeSlider(
-                            label='Z',
-                            v_model=('w_clip_z', [0, 1]),
-                            min=0.0,
-                            max=1.0,
-                            step=0.001,
-                            density='compact',
-                            hide_details=True,
-                        )
-
-                    # ----------------------------------------------------------------------------------------
-
-                    # Data tuning
-                    with v.VCard(
-                        v_if="data_channels",
-                        flat=True,
-                        v_show="show_control_panel && show_groups.includes('tune-data')",
-                        classes="py-1",
-                    ):
-                        v.VLabel(
-                            "Data pre-processing", classes="text-body-2 ml-1"
-                        )
-                        v.VSwitch(
-                            v_model=("use_log_histogram", True),
-                            density='compact',
-                            hide_details=True,
-                            inset=True,
-                            color="green",
-                            classes="ml-2",
-                            label="log scale (histograms)",
-                            true_icon="mdi-check",
-                            false_icon="mdi-close",
-                        )
-                        v.VDivider(classes="mr-n4")
-                        v.VSwitch(
-                            v_model=('normalize_ranges', True),
-                            density='compact',
-                            hide_details=True,
-                            inset=True,
-                            color="green",
-                            classes="ml-2",
-                            label="Rescale channels after range edits",
-                            true_icon="mdi-check",
-                            false_icon="mdi-close",
-                        )
-                        v.VDivider(classes="mr-n4")
-                        with v.VRow(
-                            v_for=("data, name in data_channels"),
-                            key="name",
-                            classes="mx-0 my-1",
-                        ):
-                            with v.VCol(
-                                cols="1", align_self="center pa-0 ma-0"
+                            with v.VBtnToggle(
+                                v_show=("show_control_panel", True),
+                                v_model=("show_groups", []),
+                                # base_color="grey-darken-1",
+                                # color="grey-darken-4",
+                                variant="outlined",
+                                density="conpact",
+                                multiple=True,
+                                divided=True,
+                                classes="mr-4",
                             ):
-                                html.Div(
-                                    "{{ name }}",  # : Scale({{ data.scale }}) Clamp({{ data.clamp[0] }}, {{ data.clamp[1] }})
-                                    classes="text-body-2 text-center text-truncate",
-                                    style="transform: rotate(-90deg) translateY(calc(-100% - 0.2rem));  width: 5.5rem;",
+                                v.VBtn(icon="mdi-database", value="tune-data", v_if="data_channels && Object.keys(data_channels).length")
+                                v.VBtn(icon="mdi-magnify", value="lens")
+                                v.VBtn(icon="mdi-palette", value="color")
+                                v.VBtn(icon="mdi-eye-settings-outline",value="rendering")
+                                v.VBtn(icon="mdi-chart-histogram", value="sampling")
+                                v.VBtn(icon="mdi-crop", value="clip")
+                                v.VBtn(icon="mdi-sigma", value="voxel-means")
+                                v.VBtn(icon="mdi-align-vertical-bottom", value="voxel-means-plot")
+                                v.VBtn(icon="mdi-table", value="table")
+                                v.VBtn(icon="mdi-scatter-plot", value="filter-cluster")
+                                v.VBtn(
+                                    icon="mdi-chart-timeline-variant",
+                                    value="parallel-coordinates",
+                                    v_if="has_parallel_coordinates",
                                 )
-                            with v.VCol(
-                                classes="border-s-lg",
-                                style=(
-                                    "`border-color: ${data.color} !important;`",
+                                v.VBtn(icon="mdi-video-2d", value="visualize-slice")
+
+                            v.VSpacer()
+
+                            if self.server.hot_reload:
+                                v.VBtn(
+                                    v_show=("show_control_panel", True),
+                                    icon="mdi-refresh",
+                                    click=self.ctrl.on_server_reload,
+                                    density="compact",
+                                )
+
+                            v.VBtn(
+                                icon="mdi-crop-free",
+                                density="compact",
+                                classes="mr-3",
+                                click=ctrl.reset_camera,
+                            )
+
+                        # Main widget
+                        radvolviz.NdColorMap(
+                            brush_mode=1 if self.use_supervoxels else 0,
+                            v_show="show_control_panel",
+                            component_labels=('component_labels', []),
+                            unrotated_bin_data=('unrotated_bin_data', []),
+                            unrotated_component_coords=(
+                                'unrotated_component_coords',
+                                [],
+                            ),
+                            unrotated_bin_colors=('unrotated_bin_colors', []),
+                            size=400,
+                            rotation=('w_rotation', 0),
+                            sample_size=('w_sample_size', 1100),
+                            number_of_bins=('w_bins', 6),
+                            show_lens=("show_groups.includes('lens')",),
+                            lens_radius=('w_lradius', 0.5),
+                            lens='lens_center = $event',
+                            # style="position: sticky; top: 3rem; z-index: 1; background: white;",
+                        )
+
+                        # -------------------------------------------------------------------------------------
+
+                        # Supervoxel visualization
+                        with v.VCard(
+                            flat=True,
+                            v_if="has_parallel_coordinates",
+                            v_show="show_control_panel && show_groups.includes('parallel-coordinates')",
+                            classes="py-1",
+                        ):
+                            v.VLabel("Supervoxel plot", classes="text-body-2 ml-1")
+                            v.VDivider(classes="mr-n4")
+                            with v.VRadioGroup(
+                                v_model=(
+                                    "supervoxel_visualization",
+                                    "parallel-coordinates",
                                 ),
+                                density="compact",
+                                hide_details=True,
+                                classes="ml-2",
                             ):
-                                with v.VRow(classes="mx-0"):
-                                    v.VTextField(
-                                        model_value=("data.label",),
-                                        density='compact',
-                                        hide_details=True,
-                                        prepend_icon="mdi-tag-outline",
-                                        variant="outlined",
-                                        update_modelValue="data_channels[name].label = $event; array_modified='';flushState('data_channels')",
-                                    )
-                                    v.VSwitch(
-                                        model_value=("data.enabled",),
-                                        density='compact',
-                                        hide_details=True,
-                                        inset=True,
-                                        color="green",
-                                        classes="ml-2",
-                                        true_icon="mdi-check",
-                                        false_icon="mdi-close",
-                                        update_modelValue="data_channels[name].enabled = $event; array_modified=''; flushState('data_channels')",
-                                    )
-                                with html.Div(
-                                    style="height: 4rem;",
-                                    classes="align-baseline d-flex mt-5 ml-12 mr-2 mb-n3",
+                                v.VRadio(label="PCA", value="pca")
+                                v.VRadio(label="t-SNE", value="tsne")
+                                v.VRadio(
+                                    label="Parallel Coordinates",
+                                    value="parallel-coordinates",
+                                )
+                            v.VBtn(
+                                "Clear Selection",
+                                color="primary",
+                                variant="tonal",
+                                density="compact",
+                                classes="ml-2 mt-2 mb-2",
+                                click=ctrl.clear_parallel_coordinates_selection,
+                            )
+
+                        # -------------------------------------------------------------------------------------
+
+                        # Lense control
+                        with v.VCard(
+                            flat=True,
+                            v_show="show_control_panel && show_groups.includes('lens')",
+                            classes="py-1",
+                        ):
+                            v.VSlider(
+                                v_model='w_lradius',
+                                min=0.001,
+                                max=1.0,
+                                step=0.001,
+                                density='compact',
+                                prepend_icon="mdi-radius-outline",
+                                messages="Adjust lens size",
+                            )
+                            v.VSwitch(
+                                label="Invert lens",
+                                v_model=('w_linvert', False),
+                                messages="Invert lens",
+                                density="compact",
+                                hide_details=True,
+                                inset=True,
+                                color="green",
+                                classes="ml-2",
+                            )
+
+                        # --------------------------------------------------------------------------------------
+
+                        # Color / Rotation management
+                        with v.VCard(
+                            flat=True,
+                            v_show="show_control_panel && show_groups.includes('color')",
+                            classes="py-1",
+                        ):
+                            v.VSlider(
+                                v_model='w_rotation',
+                                min=0,
+                                max=360,
+                                step=5,
+                                density='compact',
+                                prepend_icon="mdi-rotate-360",
+                                messages="Rotate color wheel",
+                            )
+
+                        # ---------------------------------------------------------------------------------------
+
+                        # Rendering settings
+                        with v.VCard(
+                            flat=True,
+                            v_show="show_control_panel && show_groups.includes('rendering')",
+                            classes="py-1",
+                        ):
+                            with v.VCol():
+                                v.VSwitch(
+                                    label="Use shadow",
+                                    v_model=('w_rendering_shadow', True),
+                                    density='compact',
+                                )
+                                v.VSwitch(
+                                    label="Use white background",
+                                    v_model=('w_rendering_bg', False),
+                                    density='compact',
+                                )
+
+                        # --------------------------------------------------------------------------------------
+
+                        # Data sampling
+                        with v.VCard(
+                            flat=True,
+                            v_show="show_control_panel && show_groups.includes('sampling')",
+                            classes="py-1",
+                        ):
+                            v.VSlider(
+                                v_model='w_sample_size',
+                                min=100,
+                                max=10000,
+                                step=500,
+                                density='compact',
+                                prepend_icon="mdi-blur-radial",
+                                messages="Adjust sampling size",
+                            )
+                            v.VSlider(
+                                v_model='w_bins',
+                                min=1,
+                                max=10,
+                                step=1,
+                                density='compact',
+                                prepend_icon="mdi-chart-scatter-plot-hexbin",
+                                messages="Number of bins for the sampling algorithm",
+                            )
+
+                        # ---------------------------------------------------------------------------------------
+
+                        # Cropping
+                        with v.VCard(
+                            flat=True,
+                            v_show="show_control_panel && show_groups.includes('clip')",
+                            classes="py-1 pr-4",
+                        ):
+                            v.VLabel("Crop dataset", classes="text-body-2 ml-1")
+                            v.VDivider(classes="mr-n4")
+                            v.VRangeSlider(
+                                label='X',
+                                v_model=('w_clip_x', [0, 1]),
+                                min=0.0,
+                                max=1.0,
+                                step=0.001,
+                                density='compact',
+                                hide_details=True,
+                            )
+                            v.VRangeSlider(
+                                label='Y',
+                                v_model=('w_clip_y', [0, 1]),
+                                min=0.0,
+                                max=1.0,
+                                step=0.001,
+                                density='compact',
+                                hide_details=True,
+                            )
+                            v.VRangeSlider(
+                                label='Z',
+                                v_model=('w_clip_z', [0, 1]),
+                                min=0.0,
+                                max=1.0,
+                                step=0.001,
+                                density='compact',
+                                hide_details=True,
+                            )
+
+                        # ----------------------------------------------------------------------------------------
+
+                        # Data tuning
+                        with v.VCard(
+                            v_if="data_channels",
+                            flat=True,
+                            v_show="show_control_panel && show_groups.includes('tune-data')",
+                            classes="py-1",
+                        ):
+                            v.VLabel(
+                                "Data pre-processing", classes="text-body-2 ml-1"
+                            )
+                            v.VSwitch(
+                                v_model=("use_log_histogram", True),
+                                density='compact',
+                                hide_details=True,
+                                inset=True,
+                                color="green",
+                                classes="ml-2",
+                                label="log scale (histograms)",
+                                true_icon="mdi-check",
+                                false_icon="mdi-close",
+                            )
+                            v.VDivider(classes="mr-n4")
+                            v.VSwitch(
+                                v_model=('normalize_ranges', True),
+                                density='compact',
+                                hide_details=True,
+                                inset=True,
+                                color="green",
+                                classes="ml-2",
+                                label="Rescale channels after range edits",
+                                true_icon="mdi-check",
+                                false_icon="mdi-close",
+                            )
+                            v.VDivider(classes="mr-n4")
+                            with v.VRow(
+                                v_for=("data, name in data_channels"),
+                                key="name",
+                                classes="mx-0 my-1",
+                            ):
+                                with v.VCol(
+                                    cols="1", align_self="center pa-0 ma-0"
                                 ):
                                     html.Div(
-                                        v_for="v, idx in data.histogram",
-                                        key="idx",
-                                        style=(
-                                            "`height: ${v}%; width: 0.5%;`",
-                                        ),
-                                        classes="d-flex bg-blue",
+                                        "{{ name }}",  # : Scale({{ data.scale }}) Clamp({{ data.clamp[0] }}, {{ data.clamp[1] }})
+                                        classes="text-body-2 text-center text-truncate",
+                                        style="transform: rotate(-90deg) translateY(calc(-100% - 0.2rem));  width: 5.5rem;",
                                     )
-                                v.VRangeSlider(
-                                    model_value=('data.focus_range',),
-                                    min=("data.data_range[0]",),
-                                    max=("data.data_range[1]",),
-                                    step=(
-                                        "(data.data_range[1] - data.data_range[0]) / 255",
+                                with v.VCol(
+                                    classes="border-s-lg",
+                                    style=(
+                                        "`border-color: ${data.color} !important;`",
                                     ),
+                                ):
+                                    with v.VRow(classes="mx-0"):
+                                        v.VTextField(
+                                            model_value=("data.label",),
+                                            density='compact',
+                                            hide_details=True,
+                                            prepend_icon="mdi-tag-outline",
+                                            variant="outlined",
+                                            update_modelValue="data_channels[name].label = $event; array_modified='';flushState('data_channels')",
+                                        )
+                                        v.VSwitch(
+                                            model_value=("data.enabled",),
+                                            density='compact',
+                                            hide_details=True,
+                                            inset=True,
+                                            color="green",
+                                            classes="ml-2",
+                                            true_icon="mdi-check",
+                                            false_icon="mdi-close",
+                                            update_modelValue="data_channels[name].enabled = $event; array_modified=''; flushState('data_channels')",
+                                        )
+                                    with html.Div(
+                                        style="height: 4rem;",
+                                        classes="align-baseline d-flex mt-5 ml-12 mr-2 mb-n3",
+                                    ):
+                                        html.Div(
+                                            v_for="v, idx in data.histogram",
+                                            key="idx",
+                                            style=(
+                                                "`height: ${v}%; width: 0.5%;`",
+                                            ),
+                                            classes="d-flex bg-blue",
+                                        )
+                                    v.VRangeSlider(
+                                        model_value=('data.focus_range',),
+                                        min=("data.data_range[0]",),
+                                        max=("data.data_range[1]",),
+                                        step=(
+                                            "(data.data_range[1] - data.data_range[0]) / 255",
+                                        ),
+                                        density='compact',
+                                        hide_details=True,
+                                        prepend_icon="mdi-magnify",
+                                        update_modelValue="data_channels[name].focus_range = $event; array_modified=name; flushState('data_channels')",
+                                    )
+
+                        with v.VCard(
+                            flat=True,
+                            v_show="show_control_panel && show_groups.includes('voxel-means')",
+                            classes="py-1",
+                        ):
+                            with v.VTable(density="compact"):
+                                with html.Tbody():
+                                    with html.Tr(
+                                        v_for="v, k in displayed_voxel_means",
+                                        key="k",
+                                    ):
+                                        html.Td("{{ k }}", classes="text-caption")
+                                        html.Td(
+                                            "{{ v.toFixed(2) }}%",
+                                            classes="text-caption",
+                                            style="text-align: right; padding-right: 10rem;",
+                                        )
+
+                        if self.label_map is not None:
+                            # Table (phase selection)
+                            with v.VCard(
+                                flat=True,
+                                v_show="show_control_panel && show_groups.includes('table')",
+                                classes="py-1 pr-4",
+                                v_if="table_content",
+                            ):
+                                v.VLabel("Label Map", classes="text-body-2 ml-1")
+                                v.VDivider(classes="mr-n4")
+                                v.VSlider(
+                                    v_model='unselected_opacity_multiplier',
+                                    min=0,
+                                    max=1,
+                                    step=0.01,
                                     density='compact',
-                                    hide_details=True,
-                                    prepend_icon="mdi-magnify",
-                                    update_modelValue="data_channels[name].focus_range = $event; array_modified=name; flushState('data_channels')",
+                                    prepend_icon="mdi-chart-scatter-plot-hexbin",
+                                    messages="Unselected Voxels Opacity Multiplier",
+                                )
+                                v.VDataTable(
+                                    headers=("table_headers", []),
+                                    items=("table_content", None),
+                                    density="compact",
+                                    item_value="id",
+                                    item_selectable=True,
+                                    select_strategy="single",  # all / single
+                                    show_select=True,
+                                    v_model=("table_selection", []),
+                                    hide_default_footer=True,
                                 )
 
-                    with v.VCard(
-                        flat=True,
-                        v_show="show_control_panel && show_groups.includes('voxel-means')",
-                        classes="py-1",
-                    ):
-                        with v.VTable(density="compact"):
-                            with html.Tbody():
-                                with html.Tr(
-                                    v_for="v, k in displayed_voxel_means",
-                                    key="k",
-                                ):
-                                    html.Td("{{ k }}", classes="text-caption")
-                                    html.Td(
-                                        "{{ v.toFixed(2) }}%",
-                                        classes="text-caption",
-                                        style="text-align: right; padding-right: 10rem;",
-                                    )
+                        # ----------------------------------------------------------------------------------------
 
+                        # Filter clusters
+                        with v.VCard(
+                            flat=True,
+                            v_show="show_control_panel && show_groups.includes('filter-cluster')",
+                            classes="py-1",
+                        ):
+                            v.VLabel("Choose the Clusters to visualize", classes="text-body-2 ml-1")
+                            v.VDivider(classes="mr-n4")
+
+                            with v.VRow(
+                                v_for=("data, name in cluster_array"),
+                                key="name",
+                                classes="mx-0 my-1",
+                            ):
+                                v.VSwitch(
+                                    v_model=("cluster_array[name]", False),
+                                    label=("`Cluster ${name}`", None),
+                                    density="compact",
+                                    hide_details=True,
+                                    inset=True,
+                                    color="green",
+                                    classes="ml-2",
+                                    update_modelValue="cluster_array[name] = $event; array_modified=name; flushState('cluster_array')"
+                                )
+
+                        # -----------------------------------------------------------------------------------------
+
+                        # Visualize slice
+                        with v.VCard(
+                            flat=True,
+                            v_show="show_control_panel && show_groups.includes('visualize-slice')",
+                            classes="py-1",
+                        ):
+                            v.VLabel("Visualize a slice", classes="text-body-2 ml-1")
+                            v.VDivider(classes="mr-n4")
+
+                            # Axis selection (x, y, z)
+                            with v.VRow(classes="mx-0 my-1"):
+                                with v.VRadioGroup(
+                                    v_model=("slice_axis", "x"),  # default value
+                                    row=True,
+                                    classes="ml-2",
+                                ):
+                                    v.VRadio(label="X", value="x")
+                                    v.VRadio(label="Y", value="y")
+                                    v.VRadio(label="Z", value="z")
+
+                            v.VDivider(classes="mr-n4")
+
+                            with v.VRow(classes="mx-0 my-1", align="center"):
+                                # Current slice label
+                                v.VLabel("Slice Index:", classes="mr-2")
+                                v.VLabel("{{ slice_index }}", classes="font-weight-bold")
+
+                            v.VSlider(
+                                v_model=("slice_index", 0),
+                                min=("min_slice_index", 0),
+                                max=("max_slice_index", 100),  # Dynamically updated based on axis
+                                step=1,
+                                hide_details=True,
+                                class_="mx-2",
+                                prepend_icon="mdi-magnify",
+                            )
+
+                            # Min and Max labels
+                            with v.VRow(classes="mx-2", justify="space-between", style="margin-top: 10px;"):
+                                v.VLabel("Min: {{ min_slice_index }}")
+                                v.VLabel("Max: {{ max_slice_index }}")
+
+                            with v.VRow(classes="mx-0 my-1", align="center", style="margin-top: 10px;"):
+                                # External site button
+                                v.VBtn(
+                                    "Visualize in 2D",
+                                    color="primary",
+                                    class_="mx-2 mt-2",
+                                    style="margin-top: 20px !important; margin-left: 30% !important;",
+                                    click="window.open(`http://127.0.0.1:8050?axis=${slice_axis}&index=${slice_index}&data=${encodeURIComponent(dataset)}`, '_blank')"
+                                )
+
+                with html.Div(
+                    v_show=(
+                        "show_groups.includes('voxel-means-plot') || "
+                        "(has_parallel_coordinates && "
+                        "show_groups.includes('parallel-coordinates'))"
+                    ),
+                    style="width: 100%; flex: 0 0 auto; overflow: auto;",
+                ):
                     with v.VCard(
                         flat=True,
-                        v_show="show_control_panel && show_groups.includes('voxel-means-plot')",
-                        classes="py-1",
+                        v_show="show_groups.includes('voxel-means-plot')",
+                        classes="py-1 px-2",
+                        style="width: 100%; border-radius: 0;",
                     ):
                         with html.Div(style="width: 100%; height: 10rem;"):
                             figure = plotly.Figure(
@@ -2113,191 +2242,76 @@ class App:
                                 figure.update
                             )
 
-                    if self.label_map is not None:
-                        # Table (phase selection)
-                        with v.VCard(
-                            flat=True,
-                            v_show="show_control_panel && show_groups.includes('table')",
-                            classes="py-1 pr-4",
-                            v_if="table_content",
-                        ):
-                            v.VLabel("Label Map", classes="text-body-2 ml-1")
-                            v.VDivider(classes="mr-n4")
-                            v.VSlider(
-                                v_model='unselected_opacity_multiplier',
-                                min=0,
-                                max=1,
-                                step=0.01,
-                                density='compact',
-                                prepend_icon="mdi-chart-scatter-plot-hexbin",
-                                messages="Unselected Voxels Opacity Multiplier",
-                            )
-                            v.VDataTable(
-                                headers=("table_headers", []),
-                                items=("table_content", None),
-                                density="compact",
-                                item_value="id",
-                                item_selectable=True,
-                                select_strategy="single",  # all / single
-                                show_select=True,
-                                v_model=("table_selection", []),
-                                hide_default_footer=True,
-                            )
-
-                    # ----------------------------------------------------------------------------------------
-
-                    # Filter clusters
                     with v.VCard(
                         flat=True,
-                        v_show="show_control_panel && show_groups.includes('filter-cluster')",
-                        classes="py-1",
+                        v_if="has_parallel_coordinates",
+                        v_show="show_groups.includes('parallel-coordinates')",
+                        classes="pb-1 px-2",
+                        style="width: 100%; border-radius: 0;",
                     ):
-                        v.VLabel("Choose the Clusters to visualize", classes="text-body-2 ml-1")
-                        v.VDivider(classes="mr-n4")
-                        
-                        with v.VRow(
-                            v_for=("data, name in cluster_array"),
-                            key="name",
-                            classes="mx-0 my-1",
+                        html.Div(
+                            style=(
+                                "height: 0.7rem; cursor: row-resize; "
+                                "display: flex; align-items: center; "
+                                "justify-content: center; margin: 0 -0.5rem;"
+                            ),
+                            mousedown=(
+                                "$event.preventDefault(); "
+                                "const startY = $event.clientY; "
+                                "const startHeight = parallel_coordinates_height; "
+                                "const onMove = (e) => { "
+                                "parallel_coordinates_height = Math.max(180, "
+                                "Math.min(Math.round(window.innerHeight * 0.72), "
+                                "startHeight + startY - e.clientY)); "
+                                "window.dispatchEvent(new Event('resize')); "
+                                "}; "
+                                "const onUp = () => { "
+                                "window.removeEventListener('mousemove', onMove); "
+                                "window.removeEventListener('mouseup', onUp); "
+                                "window.dispatchEvent(new Event('resize')); "
+                                "}; "
+                                "window.addEventListener('mousemove', onMove); "
+                                "window.addEventListener('mouseup', onUp);"
+                            ),
+                        )
+                        with html.Div(
+                            style=(
+                                "`width: 100%; height: "
+                                "${parallel_coordinates_height}px; "
+                                "min-height: 180px; max-height: 72vh;`",
+                            ),
                         ):
-                            v.VSwitch(
-                                v_model=("cluster_array[name]", False),
-                                label=("`Cluster ${name}`", None),
-                                density="compact",
-                                hide_details=True,
-                                inset=True,
-                                color="green",
-                                classes="ml-2",
-                                update_modelValue="cluster_array[name] = $event; array_modified=name; flushState('cluster_array')"
+                            parallel_coordinates = plotly.Figure(
+                                key=("supervoxel_plot_key",),
+                                display_logo=False,
+                                display_mode_bar=True,
+                                mode_bar_buttons_to_add=[
+                                    "select2d",
+                                    "lasso2d",
+                                ],
+                                responsive=True,
+                                selected=(
+                                    self.on_supervoxel_scatter_selected,
+                                    "[(($event && $event.points) || []).map((point) => ({ "
+                                    "customdata: point.customdata, "
+                                    "pointIndex: point.pointIndex, "
+                                    "pointNumber: point.pointNumber "
+                                    "}))]",
+                                ),
+                                deselect=(
+                                    self.clear_supervoxel_scatter_selection,
+                                    "[]",
+                                ),
+                                restyle=(
+                                    self.on_parallel_coordinates_restyle,
+                                    "[$event]",
+                                ),
+                                style="width: 100%; height: 100%;",
+                            )
+                            self.server.controller.parallel_coordinates_update = (
+                                parallel_coordinates.update
                             )
 
-                    # -----------------------------------------------------------------------------------------
-
-                    # Visualize slice
-                    with v.VCard(
-                        flat=True,
-                        v_show="show_control_panel && show_groups.includes('visualize-slice')",
-                        classes="py-1",
-                    ):
-                        v.VLabel("Visualize a slice", classes="text-body-2 ml-1")
-                        v.VDivider(classes="mr-n4")
-
-                        # Axis selection (x, y, z)
-                        with v.VRow(classes="mx-0 my-1"):
-                            with v.VRadioGroup(
-                                v_model=("slice_axis", "x"),  # default value
-                                row=True,
-                                classes="ml-2",
-                            ):
-                                v.VRadio(label="X", value="x")
-                                v.VRadio(label="Y", value="y")
-                                v.VRadio(label="Z", value="z")
-
-                        v.VDivider(classes="mr-n4")
-
-                        with v.VRow(classes="mx-0 my-1", align="center"):
-                            # Current slice label
-                            v.VLabel("Slice Index:", classes="mr-2")
-                            v.VLabel("{{ slice_index }}", classes="font-weight-bold")
-
-                        v.VSlider(
-                            v_model=("slice_index", 0),
-                            min=("min_slice_index", 0),
-                            max=("max_slice_index", 100),  # Dynamically updated based on axis
-                            step=1,
-                            hide_details=True,
-                            class_="mx-2",
-                            prepend_icon="mdi-magnify",
-                        )
-
-                        # Min and Max labels
-                        with v.VRow(classes="mx-2", justify="space-between", style="margin-top: 10px;"):
-                            v.VLabel("Min: {{ min_slice_index }}")
-                            v.VLabel("Max: {{ max_slice_index }}")
-                        
-                        with v.VRow(classes="mx-0 my-1", align="center", style="margin-top: 10px;"):
-                            # External site button
-                            v.VBtn(
-                                "Visualize in 2D",
-                                color="primary",
-                                class_="mx-2 mt-2",
-                                style="margin-top: 20px !important; margin-left: 30% !important;",
-                                click="window.open(`http://127.0.0.1:8050?axis=${slice_axis}&index=${slice_index}&data=${encodeURIComponent(dataset)}`, '_blank')"
-                            )
-
-                with v.VCard(
-                    flat=True,
-                    v_if="has_parallel_coordinates",
-                    v_show="show_groups.includes('parallel-coordinates')",
-                    classes="pb-1 px-2",
-                    style=(
-                        "z-index: 2; position: fixed; left: 0.5rem; "
-                        "right: 0.5rem; bottom: 0.5rem;"
-                    ),
-                ):
-                    html.Div(
-                        style=(
-                            "height: 0.7rem; cursor: row-resize; "
-                            "display: flex; align-items: center; "
-                            "justify-content: center; margin: 0 -0.5rem;"
-                        ),
-                        mousedown=(
-                            "$event.preventDefault(); "
-                            "const startY = $event.clientY; "
-                            "const startHeight = parallel_coordinates_height; "
-                            "const onMove = (e) => { "
-                            "parallel_coordinates_height = Math.max(180, "
-                            "Math.min(Math.round(window.innerHeight * 0.72), "
-                            "startHeight + startY - e.clientY)); "
-                            "window.dispatchEvent(new Event('resize')); "
-                            "}; "
-                            "const onUp = () => { "
-                            "window.removeEventListener('mousemove', onMove); "
-                            "window.removeEventListener('mouseup', onUp); "
-                            "window.dispatchEvent(new Event('resize')); "
-                            "}; "
-                            "window.addEventListener('mousemove', onMove); "
-                            "window.addEventListener('mouseup', onUp);"
-                        ),
-                    )
-                    with html.Div(
-                        style=(
-                            "`width: 100%; height: "
-                            "${parallel_coordinates_height}px; "
-                            "min-height: 180px; max-height: 72vh;`",
-                        ),
-                    ):
-                        parallel_coordinates = plotly.Figure(
-                            key=("supervoxel_plot_key",),
-                            display_logo=False,
-                            display_mode_bar=True,
-                            mode_bar_buttons_to_add=[
-                                "select2d",
-                                "lasso2d",
-                            ],
-                            responsive=True,
-                            selected=(
-                                self.on_supervoxel_scatter_selected,
-                                "[(($event && $event.points) || []).map((point) => ({ "
-                                "customdata: point.customdata, "
-                                "pointIndex: point.pointIndex, "
-                                "pointNumber: point.pointNumber "
-                                "}))]",
-                            ),
-                            deselect=(
-                                self.clear_supervoxel_scatter_selection,
-                                "[]",
-                            ),
-                            restyle=(
-                                self.on_parallel_coordinates_restyle,
-                                "[$event]",
-                            ),
-                            style="width: 100%; height: 100%;",
-                        )
-                        self.server.controller.parallel_coordinates_update = (
-                            parallel_coordinates.update
-                        )
-                
             # print(layout)
             return layout
 
@@ -2404,7 +2418,7 @@ def assign_voxels_to_clusters(data, cluster_centers, labels, distances, spatial_
     depth, rows, cols, _ = data.shape
     for idx, center in enumerate(cluster_centers):
         d, r, c = int(center[0]), int(center[1]), int(center[2])
-        
+
         # Search window around the cluster center
         d_min = max(d - grid_spacing, 0)
         d_max = min(d + grid_spacing + 1, depth)
@@ -2418,7 +2432,7 @@ def assign_voxels_to_clusters(data, cluster_centers, labels, distances, spatial_
                 for cc in range(c_min, c_max):
                     if np.all(data[dd, rr, cc] == 0):
                         continue  # Ignore zero-value voxels
-                    
+
                     voxel = np.array([dd, rr, cc] + list(data[dd, rr, cc]))
                     distance = calculate_distance(voxel, center, spatial_weight, feature_weight)
                     if distance < distances[dd, rr, cc]:
@@ -2432,7 +2446,7 @@ def update_cluster_centers(data, labels, cluster_centers):
     """
     num_clusters = len(cluster_centers)
     num_features = data.shape[3]
-    
+
     new_centers = np.zeros_like(cluster_centers)
     counts = np.zeros(num_clusters, dtype=np.int32)
 
@@ -2471,7 +2485,7 @@ def custom_slic(data, num_superpixels, spatial_weight=5, max_iter=20):
     for _ in range(max_iter):
         assign_voxels_to_clusters(data, cluster_centers, labels, distances, spatial_weight, feature_weight, grid_spacing)
         cluster_centers = update_cluster_centers(data, labels, cluster_centers)
-    
+
     # Assign all zero-value voxels to a single supervoxel label
     zero_voxel_label = (np.max(labels) + 1)
     for d in range(depth):
