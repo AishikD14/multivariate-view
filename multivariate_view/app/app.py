@@ -517,6 +517,30 @@ class App:
             cluster_dimension["constraintrange"] = constraint
         dimensions.append(cluster_dimension)
 
+        supervoxel_id_dimension_idx = (
+            self.parallel_coordinates_supervoxel_id_dimension_index()
+        )
+        supervoxel_ids = np.asarray(self.supervoxel_ids, dtype=float)
+        min_supervoxel_id = float(np.nanmin(supervoxel_ids)) - 0.5
+        max_supervoxel_id = float(np.nanmax(supervoxel_ids)) + 0.5
+        if np.isclose(min_supervoxel_id, max_supervoxel_id):
+            min_supervoxel_id -= 0.5
+            max_supervoxel_id += 0.5
+
+        supervoxel_dimension = {
+            "label": "Supervoxel ID",
+            "values": self.supervoxel_ids,
+            "range": [min_supervoxel_id, max_supervoxel_id],
+        }
+        constraint = self.parallel_coordinates_constraints.get(
+            supervoxel_id_dimension_idx
+        )
+        if constraint is None:
+            constraint = self.selected_supervoxel_constraint_ranges()
+        if constraint is not None:
+            supervoxel_dimension["constraintrange"] = constraint
+        dimensions.append(supervoxel_dimension)
+
         fig = go.Figure(
             data=go.Parcoords(
                 dimensions=dimensions,
@@ -637,6 +661,7 @@ class App:
 
                 selected_supervoxels.append(int(supervoxel_id))
 
+        self.parallel_coordinates_constraints = {}
         self.state.selected_supervoxels = selected_supervoxels
         self.state.parallel_coordinates_selection_count = (
             0 if selected_supervoxels is None else len(selected_supervoxels)
@@ -648,6 +673,7 @@ class App:
         if self.state.supervoxel_visualization not in ("pca", "tsne"):
             return
 
+        self.parallel_coordinates_constraints = {}
         self.state.selected_supervoxels = None
         self.state.parallel_coordinates_selection_count = 0
         self.indexArray = None
@@ -703,6 +729,20 @@ class App:
 
     def parallel_coordinates_feature_count(self):
         return min(len(self.state.component_labels), self.supervoxel_vectors.shape[1])
+
+    def parallel_coordinates_supervoxel_id_dimension_index(self):
+        return self.parallel_coordinates_feature_count() + 1
+
+    def selected_supervoxel_constraint_ranges(self):
+        selected_supervoxels = getattr(self.state, "selected_supervoxels", None)
+        if not selected_supervoxels:
+            return None
+
+        selected_ids = sorted(set(map(float, selected_supervoxels)))
+        return [
+            [supervoxel_id - 0.5, supervoxel_id + 0.5]
+            for supervoxel_id in selected_ids
+        ]
 
     def build_cluster_colorscale(self):
         colors = [
@@ -814,11 +854,16 @@ class App:
 
         selected_mask = np.ones(len(self.supervoxel_ids), dtype=bool)
         cluster_dimension_idx = self.parallel_coordinates_feature_count()
+        supervoxel_id_dimension_idx = (
+            self.parallel_coordinates_supervoxel_id_dimension_index()
+        )
         for dim_idx, constraint in self.parallel_coordinates_constraints.items():
             if dim_idx < cluster_dimension_idx:
                 values = self.supervoxel_vectors[:, dim_idx]
             elif dim_idx == cluster_dimension_idx:
                 values = self.supervoxel_cluster_labels
+            elif dim_idx == supervoxel_id_dimension_idx:
+                values = np.asarray(self.supervoxel_ids)
             else:
                 continue
 
