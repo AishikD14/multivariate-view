@@ -106,7 +106,7 @@ class App:
             ),
             dest="parallel_coordinates",
             action="store_true",
-            default=True,
+            default=False,
         )
 
         args, _ = self.server.cli.parse_known_args()
@@ -547,8 +547,14 @@ class App:
                 dimensions=dimensions,
                 labelside="top",
                 labelfont={
-                    "color": "#222",
+                    "color": "#f8fafc",
                     "size": 13,
+                },
+                tickfont={
+                    "color": "#f8fafc",
+                },
+                rangefont={
+                    "color": "#f8fafc",
                 },
                 line={
                     "color": self.supervoxel_cluster_labels.tolist(),
@@ -562,7 +568,7 @@ class App:
         fig.update_layout(
             margin={"l": 40, "r": 40, "t": 48, "b": 30},
             height=320,
-            paper_bgcolor="white",
+            paper_bgcolor="#1b263b",
             selectionrevision=self.supervoxel_plot_selection_revision,
         )
         return fig
